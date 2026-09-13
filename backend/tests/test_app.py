@@ -90,6 +90,7 @@ def test_expired_session(client):
 
 
 def test_initial_status_and_credentials(client):
+    assert client.app.title == "KUNAS/Labs"
     login(client)
     state = client.get("/api/status").json()
     assert not state["online"] and not state["analysis"]["enabled"]
@@ -272,7 +273,8 @@ def test_recording_lifecycle_disconnect_range_delete(client, monkeypatch):
     assert recording["status"] == "ready"
     response = client.get(recording["playback_url"], headers={"Range": "bytes=0-99"})
     assert response.status_code == 206 and len(response.content) == 100
-    assert "attachment" in client.get(recording["download_url"]).headers["content-disposition"]
+    disposition = client.get(recording["download_url"]).headers["content-disposition"]
+    assert disposition == f'attachment; filename="kunas-labs-{key}.mp4"'
     assert client.delete(f"/api/recordings/{key}").status_code == 204
     assert client.get(recording["playback_url"]).status_code == 404
     client.post("/api/recordings/start")

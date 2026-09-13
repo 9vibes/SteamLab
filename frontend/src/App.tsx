@@ -281,7 +281,7 @@ function Login({
         </section>
       </div>
       <footer className="auth-footer">
-        <span>STEAMLAB / BROADCAST OPERATIONS</span>
+        <span>KUNAS/Labs / BROADCAST OPERATIONS</span>
         <span>Live locally. Stay in control.</span>
       </footer>
     </main>
@@ -1148,7 +1148,7 @@ function Dashboard({
             <span className="tiny-divider">/</span> TIMES LOCAL
           </span>
           <span>
-            STEAMLAB<span className="amber"> CONTROL ROOM</span>
+            KUNAS/Labs<span className="amber"> CONTROL ROOM</span>
           </span>
         </footer>
       </main>

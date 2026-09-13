@@ -1,4 +1,4 @@
-# SteamLab Frontend
+# KUNAS/Labs Frontend
 
 Private React + TypeScript + Vite broadcast dashboard. All displayed operational data comes from the endpoints in `../docs/API.md`; there is no demo mode, external font service, analytics, or browser persistence of credentials.
 

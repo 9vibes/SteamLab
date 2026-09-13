@@ -1,6 +1,6 @@
 # Store assets
 
-The icon matches SteamLab's dashboard branding. Gallery screenshots are generated
+The icon matches KUNAS/Labs' dashboard branding. Gallery screenshots are generated
 by the responsive Playwright test with synthetic API fixtures, not personal footage
 or a running production stream. They contain no real stream keys or face images.
 

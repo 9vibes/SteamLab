@@ -1,10 +1,13 @@
-# SteamLab
+# KUNAS/Labs
 
 Self-hosted, single-stream OBS monitoring with an authenticated browser dashboard,
 live HLS playback, manual MP4 recording, and optional face grouping. This initial
 application has one administrator password and one stream (`live/stream`), not
 multi-user accounts or an identity-recognition service. There is no demo data.
 The exact API and service interface is [docs/API.md](docs/API.md).
+
+Previously named SteamLab. Repository/image names and installation identifiers
+remain unchanged so existing deployments retain their data and configuration.
 
 **Umbrel:** the NVIDIA package is published through the
 [KUNAS community store](https://github.com/9vibes/KNS-Umbrel).

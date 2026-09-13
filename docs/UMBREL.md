@@ -1,6 +1,6 @@
-# SteamLab NVIDIA on Umbrel
+# KUNAS/Labs on Umbrel
 
-Install **SteamLab NVIDIA** (`kunas-steamlab`) from the KUNAS community store:
+Install **KUNAS/Labs** (`kunas-steamlab`) from the KUNAS community store:
 
 ```text
 https://github.com/9vibes/KNS-Umbrel
@@ -13,7 +13,7 @@ CPU Docker Compose support for non-Umbrel installations.
 
 ## First launch
 
-1. Open SteamLab from Umbrel. The browser port is **28081**.
+1. Open KUNAS/Labs from Umbrel. The browser port is **28081**.
 2. Use the generated application password shown by Umbrel. No username is required.
 3. In Settings, copy the server URL and the complete stream key into OBS.
 4. Set OBS to H.264 video, AAC audio, and a 1-second keyframe interval.
@@ -36,7 +36,7 @@ Tor/browser access does not make RTMP ingest available through Tor.
 
 - App password: Umbrel's deterministic `APP_PASSWORD`.
 - Internal reader/worker token: Umbrel's separately derived app-specific `APP_SEED`.
-- Publishing key: generated independently and persisted by SteamLab in SQLite.
+- Publishing key: generated independently and persisted by KUNAS/Labs in SQLite.
 - Persistent app data: `${APP_DATA_DIR}/data`, including SQLite and recordings.
 - A one-shot root container initializes only app-owned data directories for UID/GID
   65532. Backend and face worker run unprivileged afterward.
@@ -54,12 +54,18 @@ directory while stopped; it contains sensitive face thumbnails and embeddings.
 ## Image releases
 
 GitHub Actions tests the backend, native CPU model parity, and browser interface,
-then publishes amd64 images to GHCR. A `v1.0.0` tag publishes:
+then publishes amd64 images to GHCR. The `v1.0.4` release publishes:
 
-- `ghcr.io/9vibes/steamlab-web:1.0.0`
-- `ghcr.io/9vibes/steamlab-backend:1.0.0`
-- `ghcr.io/9vibes/steamlab-worker:1.0.0-cpu`
-- `ghcr.io/9vibes/steamlab-worker:1.0.0-cuda`
+- `ghcr.io/9vibes/steamlab-web:1.0.4`
+- `ghcr.io/9vibes/steamlab-backend:1.0.4`
+- `ghcr.io/9vibes/steamlab-worker:1.0.4-cpu`
+- `ghcr.io/9vibes/steamlab-worker:1.0.4-cuda`
+
+Version 1.0.4 renames the visible app to KUNAS/Labs and updates its icons and
+download filenames. It retains the CUDA 12.4.1/cuDNN 9.1 and FFmpeg 4.4 RTSP
+compatibility fixes from 1.0.3. The `kunas-steamlab` app ID, repository/image names,
+ports, credentials, and data locations stay unchanged. Update the existing app;
+do not uninstall it. Stop recording before updating and re-enable analysis afterward.
 
 The Umbrel package uses the CUDA image and pins published image digests. Packages
 must permit anonymous pulls before a store update is published. Repository visibility
@@ -70,9 +76,9 @@ layer without retaining it, run with the backend Python dependencies installed:
 
 ```sh
 python scripts/verify_images.py --pull \
-  ghcr.io/9vibes/steamlab-web:1.0.0 \
-  ghcr.io/9vibes/steamlab-backend:1.0.0 \
-  ghcr.io/9vibes/steamlab-worker:1.0.0-cuda
+  ghcr.io/9vibes/steamlab-web:1.0.4 \
+  ghcr.io/9vibes/steamlab-backend:1.0.4 \
+  ghcr.io/9vibes/steamlab-worker:1.0.4-cuda
 ```
 
 This helper does not use GitHub credentials or Docker's credential configuration.

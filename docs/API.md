@@ -1,4 +1,4 @@
-# SteamLab API contract
+# KUNAS/Labs API contract
 
 All timestamps are UTC ISO 8601. Browser API uses same-origin HttpOnly session cookies.
 POST/DELETE requests (except login) require `X-CSRF-Token` from GET `/api/auth/me` or login.

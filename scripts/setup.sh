@@ -37,7 +37,7 @@ fi
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 if [ ! -f "$root/compose.yaml" ] || [ ! -f "$root/.env.example" ]; then
-    printf 'Run the setup script from an intact SteamLab checkout.\n' >&2
+    printf 'Run the setup script from an intact KUNAS/Labs checkout.\n' >&2
     exit 1
 fi
 if [ -e "$root/.env" ] || [ -L "$root/.env" ]; then

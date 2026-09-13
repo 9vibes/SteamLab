@@ -200,6 +200,8 @@ test("password login, CSRF mutation, keyboard tabs, and logout", async ({
 }) => {
   const backend = await server(page, { authenticated: false });
   await page.goto("/");
+  await expect(page).toHaveTitle("KUNAS/Labs | Broadcast Console");
+  await expect(page.locator(".brand")).toHaveText("KUNAS/LabsBROADCAST CONSOLE");
   await expect(
     page.getByRole("heading", { name: "Enter the control room" }),
   ).toBeVisible();
@@ -211,6 +213,7 @@ test("password login, CSRF mutation, keyboard tabs, and logout", async ({
   await expect(
     page.getByRole("heading", { name: "Broadcast workspace." }),
   ).toBeVisible();
+  await expect(page.locator(".app-header .brand")).toHaveText("KUNAS/LabsBROADCAST CONSOLE");
   await expect(
     page.getByRole("heading", { name: "No faces yet" }),
   ).toBeVisible();

@@ -123,7 +123,7 @@ def create_app(config=None, *, monitoring=True):
             await media.close()
             store.db.close()
 
-    app = FastAPI(title="SteamLab", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="KUNAS/Labs", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(BodyLimit)
 
     @app.middleware("http")
@@ -321,7 +321,7 @@ def create_app(config=None, *, monitoring=True):
             raise HTTPException(404, "Recording not found")
         if row[0] not in ("ready", "interrupted"):
             raise HTTPException(409, "Recording is not available for playback yet")
-        return FileResponse(target, media_type="video/mp4", filename=f"steamlab-{key}.mp4",
+        return FileResponse(target, media_type="video/mp4", filename=f"kunas-labs-{key}.mp4",
                             content_disposition_type="attachment" if download else "inline")
 
     @api.delete("/recordings/{recording_id}", status_code=204)

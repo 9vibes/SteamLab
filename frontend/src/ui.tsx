@@ -54,11 +54,11 @@ export function Brand() {
     <div className="brand">
       <span className="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 40 40">
-          <path d="M11 12h18v5H17v3h12v8H11v-5h12v-3H11z" fill="currentColor" />
+          <path d="M10 10h5v8l9-8h7L20 20l11 10h-7l-9-8v8h-5z" fill="currentColor" />
         </svg>
       </span>
       <span>
-        Steam<span className="brand-light">Lab</span>
+        KUNAS<span className="brand-light">/Labs</span>
         <small>BROADCAST CONSOLE</small>
       </span>
     </div>

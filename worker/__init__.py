@@ -1,1 +1,1 @@
-"""Isolated SteamLab face analysis worker."""
+"""Isolated KUNAS/Labs face analysis worker."""
