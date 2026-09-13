@@ -29,6 +29,8 @@ jobs:
           cache-dependency-path: |
             backend/requirements.txt
             worker/requirements*.txt
+      - name: Install FFmpeg for real decoder capability checks
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install Python dependencies
         run: pip install -r backend/requirements.txt -r worker/requirements-test.txt
       - name: Download verified face models
