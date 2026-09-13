@@ -42,6 +42,8 @@ Tor/browser access does not make RTMP ingest available through Tor.
   65532. Backend and face worker run unprivileged afterward.
 - Only nginx connects to Umbrel's shared network. Backend, worker, and MediaMTX use
   a package-private network; their HTTP/RTSP/control ports are not host-published.
+  nginx uses the `steamlab-backend` private alias to avoid generic service-name
+  collisions with other Umbrel apps.
 - The web image contains nginx configuration. MediaMTX configuration is a `.template`
   in the store package so Umbrel carries it through app updates.
 

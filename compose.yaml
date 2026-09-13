@@ -50,7 +50,9 @@ services:
       timeout: 6s
       retries: 5
       start_period: 30s
-    networks: [steamlab]
+    networks:
+      steamlab:
+        aliases: [steamlab-backend]
     init: true
     stop_grace_period: 60s
     restart: unless-stopped

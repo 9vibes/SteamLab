@@ -15,6 +15,11 @@ production deployment or measured face-recognition accuracy.
 | Compose and MediaMTX YAML parsing | Passed |
 | Model downloads and SHA256 validation | Passed |
 
+Publication follow-up: GitHub Actions on Ubuntu/Python 3.12 passed the native
+OpenCV/ONNX Runtime CPU model tests, including SFace embedding parity. The Umbrel
+package and standalone GPU override also passed Docker Compose 2.39.4 configuration
+validation. Actual CUDA inference still requires the target NVIDIA host.
+
 The browser tests use API fixtures, not a real face stream. Responsive checks cover
 320, 390, 768, 1024, and 1440 pixels. Desktop/mobile screenshots were inspected.
 Hls.js is deferred until a stream connects; Vite's large-chunk advisory remains for
@@ -48,8 +53,8 @@ graceful stdin quit, with a bounded forced-shutdown fallback.
 
 - Build and run the CPU/GPU Docker images. Docker is unavailable in this workspace;
   native media tests do not verify the Debian image's FFmpeg build or nginx runtime.
-- Run the native model parity test in `worker/README.md`, then test YuNet detection
-  and recurring-face grouping on consented, representative footage.
+- Test YuNet detection and recurring-face grouping on consented, representative
+  footage; CPU model parity is now covered by the publication workflow.
 - Verify `CUDAExecutionProvider` on the target NVIDIA GPU. CUDA image tag existence
   was checked, but neither GPU inference nor target-driver compatibility was tested.
 - Test OBS, HTTPS secure cookies, private network bindings, and storage permissions.
