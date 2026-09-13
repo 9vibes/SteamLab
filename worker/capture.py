@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 
 WIDTH, HEIGHT = 640, 360
 FRAME_BYTES = WIDTH * HEIGHT * 3
@@ -39,9 +40,23 @@ class LatestFrame:
         self.take()
 
 
+@lru_cache(maxsize=1)
+def rtsp_timeout_option():
+    # Probe without a stream URL: never log credentials. FFmpeg 4.4's -timeout
+    # enables RTSP listen mode; its client socket option is named -stimeout.
+    result = subprocess.run(["ffmpeg", "-hide_banner", "-h", "demuxer=rtsp"],
+                            capture_output=True, text=True, check=True, timeout=5)
+    options = {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
+    if "-stimeout" in options:
+        return "-stimeout"
+    if "-timeout" in options:
+        return "-timeout"
+    raise RuntimeError("FFmpeg RTSP socket timeout option unavailable")
+
+
 def ffmpeg_command(url, fps):
     return ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "quiet",
-            "-rtsp_transport", "tcp", "-timeout", "10000000",
+            "-rtsp_transport", "tcp", rtsp_timeout_option(), "10000000",
             "-fflags", "nobuffer", "-flags", "low_delay", "-threads", "1",
             "-i", url, "-map", "0:v:0", "-an", "-sn", "-dn",
             "-vf", (f"fps={fps:g},scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,"

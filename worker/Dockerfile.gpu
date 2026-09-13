@@ -18,5 +18,7 @@ COPY worker/requirements-common.txt worker/requirements-gpu.txt /tmp/requirement
 RUN pip install --no-cache-dir -r /tmp/requirements/requirements-gpu.txt
 COPY --from=models /models /models
 COPY worker/*.py /app/worker/
+# Exercise the packaged FFmpeg, not just the CI runner's newer binary.
+RUN python -c "from worker.capture import rtsp_timeout_option; assert rtsp_timeout_option() == '-stimeout'"
 USER 65532:65532
 CMD ["python", "-m", "worker.main"]

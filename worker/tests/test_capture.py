@@ -24,10 +24,45 @@ def test_latest_slot_drops_old_frames():
     assert slot.take() is None
 
 
+def test_ffmpeg_44_uses_client_socket_timeout(monkeypatch):
+    # FFmpeg 4.4 -timeout implies listen mode; -stimeout is the client option.
+    help_text = "  -timeout <int> wait for incoming connections\n  -stimeout <int> socket TCP I/O operations\n"
+    monkeypatch.setattr(capture.subprocess, "run", lambda *a, **kw: type("Result", (), {"stdout": help_text})())
+    if hasattr(capture, "rtsp_timeout_option"):
+        capture.rtsp_timeout_option.cache_clear()
+    try:
+        command = capture.ffmpeg_command("rtsp://reader:secret@media/live", 2)
+        assert "-stimeout" in command
+        assert "-timeout" not in command
+        assert command[command.index("-stimeout") + 1] == "10000000"
+    finally:
+        if hasattr(capture, "rtsp_timeout_option"):
+            capture.rtsp_timeout_option.cache_clear()
+
+
+def test_ffmpeg_modern_socket_timeout_probe_is_cached(monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        assert command == ["ffmpeg", "-hide_banner", "-h", "demuxer=rtsp"]
+        assert kwargs["timeout"] == 5 and kwargs["check"] is True
+        return type("Result", (), {"stdout": "  -timeout <int64> socket TCP I/O operations\n"})()
+
+    monkeypatch.setattr(capture.subprocess, "run", run)
+    capture.rtsp_timeout_option.cache_clear()
+    try:
+        assert capture.rtsp_timeout_option() == "-timeout"
+        assert capture.rtsp_timeout_option() == "-timeout"
+        assert len(calls) == 1
+    finally:
+        capture.rtsp_timeout_option.cache_clear()
+
+
 def test_ffmpeg_bounded_output_and_no_shell():
     command = capture.ffmpeg_command("rtsp://reader:secret@media/live", 2)
     assert command[command.index("-loglevel") + 1] == "quiet"
-    assert command[command.index("-timeout") + 1] == "10000000"
+    assert command[command.index(capture.rtsp_timeout_option()) + 1] == "10000000"
     assert "fps=2,scale=640:360" in command[command.index("-vf") + 1]
     assert command[-3:] == ["-f", "rawvideo", "pipe:1"]
 
