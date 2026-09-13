@@ -15,10 +15,13 @@ production deployment or measured face-recognition accuracy.
 | Compose and MediaMTX YAML parsing | Passed |
 | Model downloads and SHA256 validation | Passed |
 
-Publication follow-up: GitHub Actions on Ubuntu/Python 3.12 passed the native
-OpenCV/ONNX Runtime CPU model tests, including SFace embedding parity. The Umbrel
-package and standalone GPU override also passed Docker Compose 2.39.4 configuration
-validation. Actual CUDA inference still requires the target NVIDIA host.
+Publication follow-up: the [v1.0.0 release workflow](https://github.com/9vibes/SteamLab/actions/runs/34778657447)
+passed 97 backend/worker tests on Ubuntu/Python 3.12, including native OpenCV/ONNX
+Runtime CPU model parity, and 10 browser tests. All four Docker image variants
+built and published successfully. The Umbrel package and standalone GPU override
+also passed Docker Compose 2.39.4 configuration validation. Every layer of the web,
+backend, and CUDA worker release images was downloaded anonymously from GHCR and
+SHA256-verified. Actual CUDA inference still requires the target NVIDIA host.
 
 The browser tests use API fixtures, not a real face stream. Responsive checks cover
 320, 390, 768, 1024, and 1440 pixels. Desktop/mobile screenshots were inspected.
@@ -51,8 +54,8 @@ graceful stdin quit, with a bounded forced-shutdown fallback.
 
 ## Still required on the server
 
-- Build and run the CPU/GPU Docker images. Docker is unavailable in this workspace;
-  native media tests do not verify the Debian image's FFmpeg build or nginx runtime.
+- Run the published Docker images on the server. Docker builds passed on GitHub
+  Actions, but a full Umbrel installation and runtime test has not been performed.
 - Test YuNet detection and recurring-face grouping on consented, representative
   footage; CPU model parity is now covered by the publication workflow.
 - Verify `CUDAExecutionProvider` on the target NVIDIA GPU. CUDA image tag existence

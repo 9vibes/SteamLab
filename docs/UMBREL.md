@@ -64,3 +64,17 @@ then publishes amd64 images to GHCR. A `v1.0.0` tag publishes:
 The Umbrel package uses the CUDA image and pins published image digests. Packages
 must permit anonymous pulls before a store update is published. Repository visibility
 alone does not guarantee GitHub Container Registry package visibility.
+
+To verify anonymous registry access and optionally download/checksum every image
+layer without retaining it, run with the backend Python dependencies installed:
+
+```sh
+python scripts/verify_images.py --pull \
+  ghcr.io/9vibes/steamlab-web:1.0.0 \
+  ghcr.io/9vibes/steamlab-backend:1.0.0 \
+  ghcr.io/9vibes/steamlab-worker:1.0.0-cuda
+```
+
+This helper does not use GitHub credentials or Docker's credential configuration.
+The CUDA image alone is approximately 2.7 GB compressed; allow sufficient disk
+space for unpacked images as well as recordings.
