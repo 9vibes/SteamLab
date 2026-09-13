@@ -1,0 +1,21 @@
+FROM python:3.12-slim-bookworm AS models
+WORKDIR /build
+COPY worker/download_models.py .
+RUN python download_models.py --output /models
+
+# ORT 1.22 requires CUDA 12.x and cuDNN 9.x. Ubuntu 24.04 supplies Python 3.12.
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    MODEL_DIR=/models INFERENCE_DEVICE=cuda OPENCV_LOG_LEVEL=SILENT \
+    NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    PATH=/opt/venv/bin:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv ffmpeg libgomp1 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* && python3 -m venv /opt/venv
+WORKDIR /app
+COPY worker/requirements-common.txt worker/requirements-gpu.txt /tmp/requirements/
+RUN pip install --no-cache-dir -r /tmp/requirements/requirements-gpu.txt
+COPY --from=models /models /models
+COPY worker/*.py /app/worker/
+USER 65532:65532
+CMD ["python", "-m", "worker.main"]

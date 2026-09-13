@@ -1,0 +1,46 @@
+# Keys verified against the upstream v1.12.3 mediamtx.yml.
+# Stream credentials can appear in query strings; avoid verbose media logs.
+logLevel: error
+logDestinations: [stdout]
+
+authMethod: http
+authHTTPAddress: http://backend:8000/internal/media/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+
+# Private Docker network only. Never publish these HTTP ports.
+api: yes
+apiAddress: :9997
+metrics: no
+pprof: no
+playback: no
+
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtspAuthMethods: [basic]
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+
+hls: yes
+hlsAddress: :8888
+hlsEncryption: no
+# Low-latency HLS requires TLS; ordinary fMP4 also works for local HTTP.
+hlsVariant: fmp4
+hlsSegmentDuration: 1s
+hlsSegmentCount: 7
+
+webrtc: no
+srt: no
+
+pathDefaults:
+  # Backend FFmpeg owns manual recordings, not MediaMTX.
+  record: no
+  recordDeleteAfter: 0s
+
+paths:
+  live/stream:
+    source: publisher
+    overridePublisher: no

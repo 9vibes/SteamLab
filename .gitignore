@@ -1,0 +1,56 @@
+# Credentials and local overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+compose.override.yaml
+compose.override.yml
+
+# Runtime data and biometric artifacts
+/data/
+/recordings/
+/thumbnails/
+/models/
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-shm
+*.db-wal
+*.mp4
+*.onnx
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+
+# Frontend/build tooling
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+playwright-report/
+test-results/
+
+# Editor/OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

@@ -1,0 +1,15 @@
+# Apply with: docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile.gpu
+    environment:
+      INFERENCE_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

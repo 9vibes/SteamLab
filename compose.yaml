@@ -1,0 +1,101 @@
+name: steamlab
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [steamlab]
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # This process owns FFmpeg and monitoring. Never scale it or enable reload.
+    command: [uvicorn, backend.app:app, --host, 0.0.0.0, --port, "8000", --workers, "1", --no-access-log, --no-proxy-headers]
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD to at least 16 characters in .env}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN to at least 32 characters in .env}
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST to the OBS-reachable hostname or IPv4 address}
+      RTMP_PORT: ${RTMP_PORT:-1935}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      DATA_DIR: /data
+      MIN_FREE_GB: ${MIN_FREE_GB:-2}
+      FACE_RETENTION_DAYS: ${FACE_RETENTION_DAYS:-7}
+      MAX_FACES: ${MAX_FACES:-2000}
+      MATCH_THRESHOLD: ${MATCH_THRESHOLD:-0.5}
+      DETECTION_THRESHOLD: ${DETECTION_THRESHOLD:-0.85}
+      ANALYSIS_FPS: ${ANALYSIS_FPS:-2}
+    volumes:
+      - data:/data
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).close()"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 30s
+    networks: [steamlab]
+    init: true
+    stop_grace_period: 60s
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.12.3
+    volumes:
+      - ./infra/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "${RTMP_BIND:-127.0.0.1}:${RTMP_PORT:-1935}:1935"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [steamlab]
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    command: [python, -m, worker.main]
+    environment:
+      BACKEND_URL: http://backend:8000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?Set INTERNAL_TOKEN to at least 32 characters in .env}
+      MODEL_DIR: /models
+      INFERENCE_DEVICE: cpu
+    depends_on:
+      backend:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+    networks: [steamlab]
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+
+networks:
+  steamlab:
+    driver: bridge
+
+volumes:
+  data:
