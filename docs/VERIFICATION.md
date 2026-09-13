@@ -28,6 +28,18 @@ The browser tests use API fixtures, not a real face stream. Responsive checks co
 Hls.js is deferred until a stream connects; Vite's large-chunk advisory remains for
 that third-party playback engine.
 
+## CUDA packaging follow-up (1.0.1)
+
+- GPU runtime rebased to digest-pinned CUDA 12.4.1 / cuDNN 9.1 / Ubuntu 22.04;
+  anonymous manifest/config verification is recorded in [CUDA.md](CUDA.md).
+- Local Python 3.10.20 and 3.12.13: **99 tests passed on each**, including downloaded,
+  checksum-verified native SFace/OpenCV parity and two new packaging regressions.
+- `pip-audit -r worker/requirements-gpu.txt`: no known vulnerabilities found.
+- Bandit worker scan: no medium/high findings; low findings are test assertions,
+  existing shell-free FFmpeg subprocess calls, and existing heartbeat error handling.
+- No local Docker daemon or target NVIDIA driver/device was available. Image builds
+  and browser tests are release-workflow gates; GPU execution is a host-only check.
+
 ## Real media integration
 
 `tests/integration_media.py` passed all 13 checks with native MediaMTX 1.12.3 and

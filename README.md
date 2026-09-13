@@ -191,8 +191,9 @@ worker checks its actual provider, disables CPU graph fallback for CUDA, and run
 a warm-up inference before reporting readiness. Initialization failure produces an
 error heartbeat and a nonzero exit, not placeholder embeddings.
 
-The GPU image uses `nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04`, CUDA 12.6.3,
-cuDNN 9, Python 3.12, and `onnxruntime-gpu==1.22.0`. The CPU image uses
+The GPU image uses digest-pinned `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`,
+CUDA 12.4.1, cuDNN 9.1, Python 3.10, and `onnxruntime-gpu==1.22.0`.
+See [CUDA compatibility and host verification](docs/CUDA.md). The CPU image uses
 `onnxruntime==1.22.0`; both pin NumPy 2.2.6 and OpenCV headless 4.11.0.86.
 Use a compatible NVIDIA host driver. The Compose device reservation alone does
 not prove GPU inference works; verify the reported provider on real hardware.

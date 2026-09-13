@@ -19,13 +19,16 @@ docker build -f worker/Dockerfile.gpu -t steamlab-worker:cuda .
 - `INFERENCE_DEVICE=cpu|cuda`: CPU image defaults to `cpu`; GPU image defaults to `cuda`.
 
 Entrypoint: `python -m worker.main`. No ports, model volume, database volume, or runtime
-model download is needed. Both images use Python 3.12 and an unprivileged UID.
+model download is needed. The CPU image uses Python 3.12; the GPU image uses Ubuntu 22.04 Python 3.10.
+Both run as an unprivileged UID.
 The configured RTSP URL's authority is authenticated as `reader` with the URL-encoded
 `INTERNAL_TOKEN`, as required by MediaMTX; backend configuration can provide a bare URL.
 
 The optional GPU image is **`worker/Dockerfile.gpu`**, using
-`nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04`, CUDA 12.6 and cuDNN 9 with
-`onnxruntime-gpu==1.22.0`. Use an NVIDIA CUDA-12.6-compatible host driver and NVIDIA
+a digest-pinned `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`, CUDA 12.4.1 and
+cuDNN 9.1 with `onnxruntime-gpu==1.22.0`. See [CUDA compatibility](../docs/CUDA.md)
+for the verified base metadata and remaining host checks. Use a compatible NVIDIA
+host driver and NVIDIA
 Container Toolkit; grant a GPU through Compose device reservations or `--gpus all`.
 Set `INFERENCE_DEVICE=cuda`. `NVIDIA_VISIBLE_DEVICES=all` and
 `NVIDIA_DRIVER_CAPABILITIES=compute,utility` are image defaults. Do not install CPU

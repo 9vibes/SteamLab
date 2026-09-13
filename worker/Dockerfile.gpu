@@ -3,8 +3,9 @@ WORKDIR /build
 COPY worker/download_models.py .
 RUN python download_models.py --output /models
 
-# ORT 1.22 requires CUDA 12.x and cuDNN 9.x. Ubuntu 24.04 supplies Python 3.12.
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+# ORT 1.22 supports CUDA 12.x with cuDNN 9.x (see docs/CUDA.md).
+# Ubuntu 22.04 supplies Python 3.10. Preserve NVIDIA's driver requirement checks.
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     MODEL_DIR=/models INFERENCE_DEVICE=cuda OPENCV_LOG_LEVEL=SILENT \
     NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility \

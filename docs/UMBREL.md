@@ -7,7 +7,7 @@ https://github.com/9vibes/KNS-Umbrel
 ```
 
 This package targets Linux x86-64 with an NVIDIA GPU, a driver compatible with CUDA
-12.6, and NVIDIA Container Toolkit configured for Docker. The worker requires a real
+12.4, and NVIDIA Container Toolkit configured for Docker. The worker requires a real
 CUDA provider and does not silently fall back to CPU. The source repository retains
 CPU Docker Compose support for non-Umbrel installations.
 
