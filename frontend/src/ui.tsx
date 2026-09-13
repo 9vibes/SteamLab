@@ -101,6 +101,7 @@ export function Modal({
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
     dialog.showModal();
+    dialog.querySelector<HTMLInputElement>("input:not(:disabled)")?.focus();
     return () => {
       dialog.close();
       previous?.focus();

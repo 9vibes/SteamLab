@@ -1,8 +1,8 @@
 # KUNAS/Labs
 
-Self-hosted, single-stream OBS monitoring with an authenticated browser dashboard,
-live HLS playback, manual MP4 recording, and optional face grouping. This initial
-application has one administrator password and one stream (`live/stream`), not
+Self-hosted OBS monitoring with an authenticated browser dashboard, live HLS playback,
+manual MP4 recording, and optional face grouping. Version 1.1.0 supports up to
+four active feeds under one administrator password, not
 multi-user accounts or an identity-recognition service. There is no demo data.
 The exact API and service interface is [docs/API.md](docs/API.md).
 
@@ -12,6 +12,31 @@ remain unchanged so existing deployments retain their data and configuration.
 **Umbrel:** the NVIDIA package is published through the
 [KUNAS community store](https://github.com/9vibes/KNS-Umbrel).
 See [docs/UMBREL.md](docs/UMBREL.md) for requirements, login, and OBS setup.
+
+**Four-stream support requires the complete 1.1.0 update.**
+Deploy matching backend, frontend, worker, and MediaMTX configuration atomically;
+do not mix the new registry/UI with older components. This requires no additional
+ingest port, container, or app ID change. The implementation contract is
+[docs/MULTISTREAM.md](docs/MULTISTREAM.md); verification results and limits are listed in
+[docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+## Streams
+
+- The existing feed becomes **Stream 1** (`stream`, path `live/stream`), preserving
+  its publishing key. Add up to three more active feeds for a maximum of four.
+  New feeds have unique IDs and paths `live/stream-<32 lowercase UUID hex digits>`.
+- Names can be changed, including Stream 1; names are trimmed, 1-64 characters,
+  without control characters. Selecting a feed changes only the browser view:
+  server feeds continue independently, including analysis toggles, recording,
+  bitrate monitoring, sessions, and separate face groups.
+- Archive an additional feed only when it is offline, not recording, and MediaMTX
+  is reachable and confirms no pending publisher. The default feed cannot be
+  archived. Archiving retains face, session, and recording history and frees an
+  active slot; it disables ingest/analysis, never reuses the ID, and has no restore
+  endpoint. Archived history can be read/deleted and the feed can still be renamed.
+- Existing scoped REST routes without `stream_id` still target Stream 1. The HLS
+  player uses `/api/streams/{id}/live/index.m3u8` so relative playlists and segments
+  stay scoped; `/api/live/{file}` remains a default-feed alias.
 
 ## Requirements
 
@@ -57,7 +82,8 @@ output, container environment inspection, or authenticated stream URLs.
 
 ## OBS And Access
 
-After login, copy the server URL and **entire** stream key from Settings:
+After login, select the feed and copy the server URL and **entire** stream key
+from Settings. For the default Stream 1:
 
 ```text
 Server:     rtmp://<PUBLIC_HOST>:<RTMP_PORT>/live
@@ -66,9 +92,12 @@ Full URL:   rtmp://<PUBLIC_HOST>:<RTMP_PORT>/live/stream?user=publisher&pass=<ge
 ```
 
 The backend generates and persists the publishing secret; there is no public token
-endpoint or `.env` publishing-key setting. Keep `?user=publisher&pass=...` intact
-when pasting the stream key. Key rotation is available only while offline and with
-MediaMTX reachable. A second publisher cannot replace an active publisher.
+endpoint or `.env` publishing-key setting. Each additional feed uses its own ID
+and secret in `<id>?user=publisher&pass=<secret>` on the same server URL and port.
+Keep `?user=publisher&pass=...` intact when pasting the stream key. Key rotation is
+available only while the selected feed is offline and MediaMTX is reachable with
+no pending publisher. A second publisher cannot replace an active publisher on
+the same feed; distinct registered feeds can publish concurrently.
 
 For remote OBS, set `PUBLIC_HOST` to the host's VPN DNS name or IPv4 address and
 `RTMP_BIND` to its VPN interface IP. `PUBLIC_HOST` is an advertised address, not a
@@ -122,10 +151,10 @@ excluded deliberately, so network membership is its security boundary.
 MediaMTX settings are checked against the
 [upstream v1.12.3 configuration](https://github.com/bluenviron/mediamtx/blob/v1.12.3/mediamtx.yml):
 
-- The only configured path is `live/stream`, with `overridePublisher: no`.
-- HTTP authentication calls `http://backend:8000/internal/media/auth`. The backend checks the action, path, protocol, and credentials, denying anonymous reads, publisher reads, and unsupported actions. Read credentials are user `reader`, password `INTERNAL_TOKEN`, for RTMP/RTSP/HLS as applicable. Publishing uses user `publisher` and the separate persisted stream key.
+- The multistream configuration uses `~^live/(stream|stream-[a-f0-9]{32})$`, with `overridePublisher: no`. Deploy the matching source configuration or Umbrel template together with the application components.
+- HTTP authentication calls `http://backend:8000/internal/media/auth`. The backend checks the registered, non-archived stream, action, path, protocol, and credentials, denying anonymous reads, publisher reads, and unsupported actions. The path regex alone never authorizes access. Read credentials are user `reader`, password `INTERNAL_TOKEN`, for RTMP/RTSP/HLS as applicable. Publishing uses user `publisher` and that stream's separate persisted key.
 - Only `api` and `metrics` actions bypass the callback. API is enabled at `http://mediamtx:9997` for backend monitoring; metrics and pprof listeners are disabled.
-- RTSP is TCP-only at `rtsp://mediamtx:8554/live/stream`; HLS is private at `http://mediamtx:8888/live/stream` with `hlsVariant: fmp4`. This works over initial local HTTP; low-latency HLS requires TLS and is not enabled.
+- RTSP is TCP-only at `rtsp://mediamtx:8554/live/{id}`; HLS is private at `http://mediamtx:8888/live/{id}` with `hlsVariant: fmp4`. The default ID is `stream`. This works over initial local HTTP; low-latency HLS requires TLS and is not enabled.
 - WebRTC, SRT, playback, and MediaMTX recording are disabled. Media logging is `error` to reduce query-secret exposure. nginx and Uvicorn access logging are disabled; still treat diagnostic logs as sensitive.
 
 Backend liveness gates web, MediaMTX, and worker startup; liveness must not depend
@@ -141,12 +170,21 @@ The named volume `steamlab_data` contains `/data/steamlab.sqlite3`, face data, a
 SQLite. Treat face thumbnails and embeddings as sensitive biometric data: obtain
 consent, restrict access, and use the shortest appropriate retention.
 
-Analysis is **off initially and after every backend restart** and is explicitly enabled in the app. Defaults are
+The 1.1.0 migration adds stream ownership to sessions, faces, and
+recordings, backfilling legacy rows to Stream 1 (`stream`). It preserves existing
+row IDs, files, and the publishing key: files are not moved or overwritten.
+Default-stream settings retain their original keys; additional streams use
+`stream:{id}:{key}` settings. Back up the whole volume before migration.
+
+Analysis is **off initially and after every backend restart** and is explicitly enabled per feed in the app. Defaults are
 7-day face retention, `MAX_FACES=2000`, `ANALYSIS_FPS=2`,
 `DETECTION_THRESHOLD=0.85`, and `MATCH_THRESHOLD=0.5`. Match similarity is raw
 cosine similarity, not a probability or a verified identity. Face deletion removes
 stored thumbnails, embeddings, and sightings; deleting face data does not redact
 faces from existing video recordings.
+
+`MAX_FACES` is one application-wide total across all feeds, including archived
+face groups, not a separate allowance per feed. Group matching remains stream-scoped.
 
 Recording is manual: the backend runs FFmpeg with direct stream copy into one
 fragmented MP4 file per manual recording session. It does not use MediaMTX's
@@ -155,7 +193,8 @@ Completed fragments can remain recoverable after interruption, but the unfinishe
 tail may be lost; the backend labels interrupted recordings separately from ready files.
 Start a new recording explicitly after reconnecting or recovering.
 
-`MIN_FREE_GB=2` is the backend's low-disk guard for starting/continuing recordings.
+`MIN_FREE_GB=2` is the shared low-disk guard for starting/continuing all recordings,
+not a separate reserve per feed.
 Below that reserve, the worker pauses decoding and the dashboard displays a storage
 warning. Face analysis resumes when space recovers; recording must be started manually.
 The backend also rejects in-flight face observations with HTTP 409 while space is low.
@@ -202,6 +241,16 @@ Use a compatible NVIDIA host driver. The Compose device reservation alone does
 not prove GPU inference works; verify the reported provider on real hardware.
 Both images install checksum-verified models and licenses during the build.
 Do not mount an empty directory over `/models` and hide those models.
+
+The local multistream worker shares one initialized inference engine (one NVIDIA
+engine in CUDA mode). Up to four independent FFmpeg decoders drain concurrently
+into bounded latest-frame slots; inference fairly round-robins those slots without
+concurrent calls to the mutable OpenCV detector. Config polling and heartbeats run
+independently of inference, and session/catalog invalidation and decoder shutdown
+are per feed. Renaming or reordering feeds does not restart surviving feeds.
+`ANALYSIS_FPS` is a capture target, not guaranteed per-feed throughput; achieved FPS
+depends on hardware and concurrent load. Strict CUDA initialization and the tested
+FFmpeg 4.4 RTSP option detection are retained.
 
 ## Verification
 
@@ -251,7 +300,7 @@ MEDIAMTX_BIN=/path/to/mediamtx FFMPEG_BIN=/path/to/ffmpeg FFPROBE_BIN=/path/to/f
   INTEGRATION_ROOT=/existing/temporary/directory .venv/bin/python tests/integration_media.py
 ```
 
-It requires free localhost ports 8000, 1935, 8554, 8888, and 9997; generates temporary
+It requires curl on PATH and free localhost ports 8000, 1935, 8554, 8888, and 9997; generates temporary
 credentials; and leaves test artifacts in the specified directory. It does not use or
 modify `.env` or your production data. See [docs/VERIFICATION.md](docs/VERIFICATION.md)
 for the checks performed during implementation and the remaining deployment checks.

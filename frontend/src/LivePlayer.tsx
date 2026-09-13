@@ -6,11 +6,13 @@ export default function LivePlayer({
   online,
   available,
   session,
+  manifestUrl,
   onUnauthorized,
 }: {
   online: boolean;
   available: boolean;
   session: string | null;
+  manifestUrl: string;
   onUnauthorized: () => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -65,7 +67,7 @@ export default function LivePlayer({
     };
     const nativeError = () => {
       // Native HLS does not expose HTTP status; probe the authenticated manifest.
-      void fetch("/api/live/index.m3u8", {
+      void fetch(manifestUrl, {
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
@@ -87,7 +89,6 @@ export default function LivePlayer({
     element.addEventListener("ended", nativeError);
     element.addEventListener("error", nativeError);
     loading();
-    const url = "/api/live/index.m3u8";
     void import("hls.js")
       .then(({ default: Hls }) => {
         if (disposed) return;
@@ -106,10 +107,10 @@ export default function LivePlayer({
               fail();
             }
           });
-          hls.loadSource(url);
+          hls.loadSource(manifestUrl);
           hls.attachMedia(element);
         } else if (element.canPlayType("application/vnd.apple.mpegurl")) {
-          element.src = url;
+          element.src = manifestUrl;
           element.addEventListener("loadedmetadata", play);
         } else {
           clearTimeout(watchdog);
@@ -138,7 +139,7 @@ export default function LivePlayer({
       element.removeAttribute("src");
       element.load();
     };
-  }, [online, available, session, retry, onUnauthorized]);
+  }, [online, available, session, manifestUrl, retry, onUnauthorized]);
 
   const waiting = !online || !available;
   return (

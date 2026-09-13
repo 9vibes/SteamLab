@@ -291,6 +291,92 @@ p {
   margin: 0 auto;
   padding: 34px 4% 0;
 }
+.stream-manager {
+  padding: 20px;
+}
+.stream-manager .input-help,
+.stream-name-field .input-help {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.stream-toolbar,
+.stream-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.stream-toolbar h2 {
+  margin-top: 7px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.stream-toolbar h2 span {
+  margin-left: 12px;
+}
+.stream-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+.stream-card {
+  min-width: 0;
+  text-align: left;
+  padding: 14px;
+  background: #141714;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.stream-card.selected {
+  border-color: var(--amber);
+  background: #27251c;
+}
+.stream-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.stream-card > span {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+  font: 10px var(--mono);
+}
+.archive-selector {
+  max-width: 400px;
+  margin-top: 18px;
+}
+.stream-name-field {
+  margin: 20px 0;
+}
+.selected-stream-name,
+.preview-panel .panel-heading > .mono {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.archive-preview {
+  display: grid;
+  place-items: center;
+}
+@media (max-width: 1024px) {
+  .stream-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 480px) {
+  .stream-manager {
+    padding: 14px;
+  }
+  .stream-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .page-heading {
   display: flex;
   align-items: center;

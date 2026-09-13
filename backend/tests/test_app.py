@@ -123,6 +123,15 @@ def test_media_authorization(client, action, protocol, user, password, path, exp
     assert response.status_code == expected
 
 
+def test_hls_authorization_accepts_mediamtx_null_connection_id(client):
+    response = client.post("/internal/media/auth", json={
+        "id": None, "action": "read", "protocol": "hls", "path": "live/stream",
+        "user": "reader", "password": client.app.state.config.internal_token,
+    })
+    assert response.status_code == 204
+    assert not client.app.state.admissions
+
+
 def test_key_rotation(client):
     login(client)
     original = client.get("/api/settings").json()["stream_key"]
@@ -225,7 +234,7 @@ def test_worker_heartbeat(client):
     assert client.post("/internal/worker/heartbeat", json={"state": "analyzing", "provider": "CPUExecutionProvider"}, headers=headers).status_code == 204
     status = client.get("/api/status").json()["analysis"]
     assert status["provider"] == "CPUExecutionProvider" and status["last_seen"]
-    client.app.state.heartbeat_at = time.monotonic() - 20
+    client.app.state.media.heartbeat_at = time.monotonic() - 20
     assert client.get("/api/status").json()["analysis"]["state"] == "unavailable"
 
 
@@ -291,7 +300,7 @@ def test_restart_preserves_key_and_marks_interrupted(tmp_path):
     store = Store(config)
     key = store.get("stream_key")
     with store.db:
-        store.db.execute("INSERT INTO recordings VALUES ('test', NULL, ?, NULL, 'recording', NULL)", (utcnow(),))
+        store.db.execute("INSERT INTO recordings (id, started_at, status) VALUES ('test', ?, 'recording')", (utcnow(),))
         store.set("analysis_enabled", 1)
     store.db.close()
     store = Store(config)
@@ -349,6 +358,8 @@ def test_rotation_closes_previously_admitted_connections(client):
                                  request=httpx.Request("GET", "http://media/v3/rtmpconns/list")))
     media.client.post = AsyncMock(return_value=httpx.Response(200, request=httpx.Request("POST", "http://media/kick")))
     old_key = client.app.state.store.get("stream_key")
+    assert client.post("/internal/media/auth", json={"id": "pending", "action": "publish", "protocol": "rtmp",
+                       "user": "publisher", "password": old_key, "path": "live/stream"}).status_code == 204
     assert client.post("/api/stream/key").status_code == 200
     assert client.app.state.store.get("stream_key") != old_key
     assert media.client.post.call_args.args[0].endswith("/v3/rtmpconns/kick/pending")
@@ -356,22 +367,25 @@ def test_rotation_closes_previously_admitted_connections(client):
                        "user": "publisher", "password": old_key, "path": "live/stream"}).status_code == 401
 
 
-def test_publisher_auth_waits_for_rotation_lock(client):
+def test_publisher_auth_rejects_during_rotation_without_waiting(client):
     import asyncio
 
     async def scenario():
         media, store = client.app.state.media, client.app.state.store
         old_key = store.get("stream_key")
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=client.app), base_url="http://test") as request:
-            async with media.lock:
+            async with client.app.state.ingest_lock:
+                client.app.state.admission_blocks.add("stream")
                 pending = asyncio.create_task(request.post("/internal/media/auth", json={
                     "action": "publish", "protocol": "rtmp", "user": "publisher",
                     "password": old_key, "path": "live/stream"}))
-                await asyncio.sleep(0.01)
-                assert not pending.done()
+                assert (await asyncio.wait_for(pending, timeout=0.5)).status_code == 401
                 with store.db:
                     store.set("stream_key", "replacement-key")
-            assert (await pending).status_code == 401
+                client.app.state.admission_blocks.remove("stream")
+            assert (await request.post("/internal/media/auth", json={
+                "action": "publish", "protocol": "rtmp", "user": "publisher",
+                "password": old_key, "path": "live/stream"})).status_code == 401
 
     client.portal.call(scenario)
 
@@ -413,7 +427,7 @@ def test_all_recordings_remain_manageable(client):
     login(client)
     store = client.app.state.store
     with store.db:
-        store.db.executemany("INSERT INTO recordings VALUES (?, NULL, ?, ?, 'ready', NULL)",
+        store.db.executemany("INSERT INTO recordings (id, started_at, ended_at, status) VALUES (?, ?, ?, 'ready')",
                              [(str(uuid.uuid4()), utcnow(), utcnow()) for _ in range(501)])
     assert len(client.get("/api/recordings").json()["items"]) == 501
 

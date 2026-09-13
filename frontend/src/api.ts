@@ -1,4 +1,7 @@
 export interface Status {
+  stream_id: string;
+  stream_name: string;
+  archived: boolean;
   online: boolean;
   media_available: boolean;
   session_id: string | null;
@@ -21,6 +24,9 @@ export interface Status {
 }
 
 export interface Settings {
+  stream_id: string;
+  stream_name: string;
+  archived: boolean;
   rtmp_url: string;
   stream_key: string;
   analysis_enabled: boolean;
@@ -29,6 +35,25 @@ export interface Settings {
   face_retention_days: number;
   max_faces: number;
   analysis_fps: number;
+}
+
+export interface Stream {
+  id: string;
+  name: string;
+  created_at: string;
+  archived_at: string | null;
+  is_default: boolean;
+  online: boolean;
+  media_available: boolean;
+  recording: Status["recording"];
+  bitrate_mbps: number;
+  analysis_enabled: boolean;
+}
+
+export interface StreamList {
+  items: Stream[];
+  max_streams: number;
+  active_count: number;
 }
 
 export interface Face {
@@ -71,6 +96,19 @@ export class ApiError extends Error {
 }
 
 export type Request = <T>(path: string, init?: RequestInit) => Promise<T>;
+
+export function scopeRequest(request: Request, streamId: string): Request {
+  return <T>(path: string, init?: RequestInit) => {
+    const url = new URL(path, window.location.origin);
+    if (
+      /^\/api\/(status|settings|stream\/key|analysis|sessions|faces(?:\/[^/]+)?|recordings(?:\/[^/]+)?)$/.test(
+        url.pathname,
+      )
+    )
+      url.searchParams.set("stream_id", streamId);
+    return request<T>(url.pathname + url.search, init);
+  };
+}
 
 export async function api<T>(
   path: string,

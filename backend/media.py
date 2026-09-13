@@ -30,8 +30,11 @@ class Bitrate:
 
 
 class Media:
-    def __init__(self, config, store):
+    def __init__(self, config, store, stream_id="stream"):
         self.config, self.store = config, store
+        self.stream_id = stream_id
+        self.path = f"live/{stream_id}"
+        self.archived = False
         self.client = httpx.AsyncClient(timeout=3, trust_env=False)
         self.lock = asyncio.Lock()
         self.available = False
@@ -46,10 +49,20 @@ class Media:
         self.recording = None
         self.process = None
         self.recording_source = None
+        self.heartbeat = {"state": "unavailable", "provider": None, "error": None, "last_seen": None}
+        self.heartbeat_at = 0
         self.recordings_dir = config.data_dir / "recordings"
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
-        parsed = urlsplit(config.rtsp_url)
+        self.rtsp_url = self.stream_url(config.rtsp_url)
+        self.hls_base = self.stream_url(config.hls_base)
+        parsed = urlsplit(self.rtsp_url)
         self.reader_url = parsed._replace(netloc=f"reader:{quote(config.internal_token, safe='')}@{parsed.netloc}").geturl()
+
+    def stream_url(self, url):
+        if self.stream_id == "stream":
+            return url
+        parsed = urlsplit(url)
+        return parsed._replace(path=parsed.path.rsplit("/", 1)[0] + "/" + self.stream_id).geturl()
 
     @property
     def min_free_bytes(self):
@@ -59,7 +72,7 @@ class Media:
         return shutil.disk_usage(self.recordings_dir).free
 
     async def read_path(self):
-        response = await self.client.get(self.config.media_api + "/v3/paths/get/live/stream")
+        response = await self.client.get(self.config.media_api + "/v3/paths/get/" + self.path)
         if response.status_code == 404:
             return {"ready": False}
         response.raise_for_status()
@@ -67,6 +80,8 @@ class Media:
 
     async def refresh(self):
         async with self.lock:
+            if self.archived:
+                return
             try:
                 path = await self.read_path()
                 self.available = True
@@ -93,7 +108,8 @@ class Media:
                     self.session_id = str(uuid.uuid4()) if online else None
                     self.started_at = utcnow() if online else None
                     if online:
-                        self.store.db.execute("INSERT INTO sessions VALUES (?, ?, NULL)", (self.session_id, self.started_at))
+                        self.store.db.execute("INSERT INTO sessions (id, started_at, stream_id) VALUES (?, ?, ?)",
+                                              (self.session_id, self.started_at, self.stream_id))
                 self.source = source
             self.online, self.tracks = online, path.get("tracks") or []
             self.bitrate = self.meter.update(source, path.get("bytesReceived", 0), time.monotonic())
@@ -107,13 +123,9 @@ class Media:
                 self.warning = None
 
     async def monitor(self):
-        tick = 0
         while True:
             try:
                 await self.refresh()
-                if tick % 60 == 0:
-                    self.store.prune()
-                tick += 1
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -124,6 +136,8 @@ class Media:
     async def start(self):
         await self.refresh()
         async with self.lock:
+            if self.archived:
+                raise HTTPException(409, "Stream is archived")
             if self.recording:
                 raise HTTPException(409, "A recording is already running")
             if not self.available or not self.online:
@@ -149,8 +163,9 @@ class Media:
             self.recording = {"id": recording_id, "started_at": started}
             self.recording_source = self.source
             with self.store.db:
-                self.store.db.execute("INSERT INTO recordings VALUES (?, ?, ?, NULL, 'recording', NULL)",
-                                      (recording_id, self.session_id, started))
+                self.store.db.execute("""INSERT INTO recordings (id, session_id, started_at, status, stream_id)
+                                      VALUES (?, ?, ?, 'recording', ?)""",
+                                      (recording_id, self.session_id, started, self.stream_id))
             self.warning = None
             return dict(self.recording)
 
@@ -197,15 +212,16 @@ class Media:
             await self.stop_locked("Server shutting down", interrupted=True)
         await self.client.aclose()
 
-    def recordings(self):
+    def recordings(self, stream_id=None):
+        stream_id = stream_id or self.stream_id
         result = []
-        for row in self.store.db.execute("SELECT * FROM recordings ORDER BY started_at DESC"):
+        for row in self.store.db.execute("SELECT * FROM recordings WHERE stream_id=? ORDER BY started_at DESC", (stream_id,)):
             item = dict(row)
             target = self.recordings_dir / f"{row['id']}.mp4"
             size = target.stat().st_size if target.exists() else 0
             playable = row["status"] in ("ready", "interrupted") and size > 1024
             result.append({**item, "size_bytes": size,
                            "duration_seconds": (datetime.fromisoformat(row["ended_at"]) - datetime.fromisoformat(row["started_at"])).total_seconds() if row["ended_at"] else None,
-                           "playback_url": f"/api/recordings/{row['id']}/file" if playable else None,
-                           "download_url": f"/api/recordings/{row['id']}/file?download=1" if playable else None})
+                           "playback_url": f"/api/recordings/{row['id']}/file?stream_id={stream_id}" if playable else None,
+                           "download_url": f"/api/recordings/{row['id']}/file?download=1&stream_id={stream_id}" if playable else None})
         return {"items": result}

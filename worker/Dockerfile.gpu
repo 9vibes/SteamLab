@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     PATH=/opt/venv/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv ffmpeg libgomp1 ca-certificates \
+    python3 python3-venv curl ffmpeg libgomp1 ca-certificates \
     && rm -rf /var/lib/apt/lists/* && python3 -m venv /opt/venv
 WORKDIR /app
 COPY worker/requirements-common.txt worker/requirements-gpu.txt /tmp/requirements/

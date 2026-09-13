@@ -80,3 +80,48 @@ graceful stdin quit, with a bounded forced-shutdown fallback.
 The default sampling resolution is 640x360 at 2 FPS, so small, distant, blurred,
 occluded, or briefly visible faces may not enter the catalog. All settings and
 deployment precautions are documented in the root README.
+
+## Multistream verification (1.1.0)
+
+Checks against [MULTISTREAM.md](MULTISTREAM.md) on September 13, 2026:
+
+| Check | Result |
+| --- | --- |
+| Backend and worker regression suite | 235 passed |
+| Native face-model test module | Skipped; compatible dependencies unavailable locally |
+| Browser tests | 20 passed |
+| TypeScript/Vite production build | Passed |
+| Four-stream real-media integration | 21 of 21 checks passed |
+| Standalone GPU and Umbrel Compose configuration | Passed |
+
+The backend suite verifies genuine legacy-schema migration twice, preserving row
+IDs, the original key, face blobs/embeddings, null-session recordings, and recording
+files. It covers concurrent capacity enforcement, scoped catalogs and global limits,
+independent recording/analysis/versioning, archive/history behavior, and restart safety.
+Gated publisher-auth regressions exercise the MediaMTX callback/path-API deadlock
+case and ensure key rotation/archive do not block another stream's authentication.
+
+Worker tests verify one engine, fair scheduling, isolated generations, four bounded
+frame slots, child-process shutdown, and stalled-delivery recovery. A real local HTTP
+server and curl 8.22.0 additionally verify credentials, JSON escaping, HTTP errors,
+redirect rejection, deadline termination, and successful requests after timeout.
+
+The real-media harness used MediaMTX 1.12.3 and FFmpeg/FFprobe 7.0.2-static, generated
+four distinguishable H.264/AAC feeds, and ran four simultaneous recorders. All four
+HLS master/variant/asset chains and recording downloads/ranges/decoding passed.
+Stopping, disconnecting, rotating, or archiving one feed left the other three
+publishers and active recordings intact. Four actual worker configurations and curl
+HTTP requests were exercised alongside four native RTSP raw-frame slots. This did
+not run face inference on real people. Artifacts from the final run are at
+`/tmp/opencode/steamlab-integration/run-morqxmg_/` in the implementation environment.
+
+Desktop/mobile screenshots were regenerated and inspected. Browser tests use
+synthetic API fixtures, including slow-response switching and archive management.
+
+These are the local pre-release checks for 1.1.0, not a target-host deployment test. Build the matching
+backend, frontend, and worker images (worker now also requires curl), and deploy
+the matching MediaMTX configuration/template together. Before publication, rerun
+native model parity on supported Python/glibc, test the CUDA image on the target
+GPU, and measure four-feed inference throughput on consented representative footage.
+The CUDA 12.4.1/cuDNN 9.1 pin and FFmpeg 4.4 compatibility logic remain unchanged;
+sampling FPS is not a guarantee of achieved per-stream analysis throughput.

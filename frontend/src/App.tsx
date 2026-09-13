@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
-import { api, ApiError, bytes, duration, message, timestamp } from "./api";
+import {
+  api,
+  ApiError,
+  bytes,
+  duration,
+  message,
+  scopeRequest,
+  timestamp,
+} from "./api";
 import type {
   Face,
   Recording,
@@ -8,6 +16,8 @@ import type {
   Session,
   Settings,
   Status,
+  Stream,
+  StreamList,
 } from "./api";
 import LivePlayer from "./LivePlayer";
 import { Brand, Empty, Icon, Modal } from "./ui";
@@ -106,7 +116,7 @@ export default function App() {
     );
   if (csrf)
     return (
-      <Dashboard
+      <StreamWorkspace
         key={csrf}
         csrf={csrf}
         onUnauthorized={unauthorized}
@@ -288,7 +298,7 @@ function Login({
   );
 }
 
-function Dashboard({
+function StreamWorkspace({
   csrf,
   onUnauthorized,
   onLogout,
@@ -309,6 +319,402 @@ function Dashboard({
         }
       },
   );
+  const [streams, setStreams] = useState<StreamList | null>(null);
+  const [selectedId, setSelectedId] = useState("stream");
+  const [error, setError] = useState("");
+  const [form, setForm] = useState<{
+    kind: "add" | "rename" | "archive";
+    stream?: Stream;
+  } | null>(null);
+  const [name, setName] = useState("");
+  const [formError, setFormError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const version = useRef(0);
+  useSerialPoll(async (signal) => {
+    const revision = version.current;
+    try {
+      const result = await request<StreamList>("/api/streams", { signal });
+      if (!signal.aborted && revision === version.current && !busyRef.current) {
+        setStreams(result);
+        setError("");
+      }
+    } catch (error) {
+      if (!signal.aborted && revision === version.current)
+        setError(message(error));
+    }
+  }, 2000);
+
+  const selected = streams?.items.find((item) => item.id === selectedId);
+  const limit = Math.min(4, streams?.max_streams ?? 4);
+  const atLimit = !streams || streams.active_count >= limit;
+  const archiveBlocked =
+    !selected ||
+    selected.is_default ||
+    !!selected.archived_at ||
+    selected.online ||
+    !!selected.recording ||
+    !selected.media_available ||
+    !!error;
+  function open(kind: "add" | "rename" | "archive") {
+    setForm({ kind, stream: kind === "add" ? undefined : selected });
+    setName(kind === "rename" ? (selected?.name ?? "") : "");
+    setFormError("");
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!form || busyRef.current) return;
+    if (form.kind === "add" && atLimit) {
+      setFormError(
+        `At most ${limit} active streams are allowed. Archive an offline stream to free a slot.`,
+      );
+      return;
+    }
+    if (
+      form.kind !== "archive" &&
+      (!name.trim() ||
+        name.trim().length > 64 ||
+        /[\u0000-\u001f\u007f-\u009f]/.test(name))
+    ) {
+      setFormError("Use a name of 1-64 characters without control characters.");
+      return;
+    }
+    busyRef.current = true;
+    version.current++;
+    setBusy(true);
+    setFormError("");
+    try {
+      if (form.kind === "archive") {
+        await request(`/api/streams/${encodeURIComponent(form.stream!.id)}`, {
+          method: "DELETE",
+        });
+        setStreams(
+          (current) =>
+            current && {
+              ...current,
+              active_count: current.active_count - 1,
+              items: current.items.map((item) =>
+                item.id === form.stream!.id
+                  ? {
+                      ...item,
+                      archived_at: new Date().toISOString(),
+                      online: false,
+                      recording: null,
+                      analysis_enabled: false,
+                    }
+                  : item,
+              ),
+            },
+        );
+      } else {
+        const result = await request<Stream>(
+          form.kind === "add"
+            ? "/api/streams"
+            : `/api/streams/${encodeURIComponent(form.stream!.id)}`,
+          {
+            method: form.kind === "add" ? "POST" : "PATCH",
+            body: JSON.stringify({ name: name.trim() }),
+          },
+        );
+        setStreams(
+          (current) =>
+            current && {
+              ...current,
+              active_count:
+                current.active_count + (form.kind === "add" ? 1 : 0),
+              items:
+                form.kind === "add"
+                  ? [...current.items, result]
+                  : current.items.map((item) =>
+                      item.id === result.id ? result : item,
+                    ),
+            },
+        );
+        if (form.kind === "add") setSelectedId(result.id);
+      }
+      setForm(null);
+    } catch (error) {
+      setFormError(message(error));
+    } finally {
+      version.current++;
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="dashboard">
+      <header className="app-header">
+        <Brand />
+        <div className="workspace-label">
+          <span className="header-divider" />
+          PRIVATE WORKSPACE<span className="workspace-slash">/</span>
+          <span>Overview</span>
+        </div>
+        <div className="header-actions">
+          <span className="secure-label">
+            <Icon name="lock" size={13} />
+            SECURE SESSION
+          </span>
+          <button
+            className="icon-button"
+            title="Sign out"
+            aria-label="Sign out"
+            disabled={busy}
+            onClick={() => {
+              if (busyRef.current) return;
+              busyRef.current = true;
+              setBusy(true);
+              void request("/api/auth/logout", { method: "POST" })
+                .then(onLogout)
+                .catch((error) => setError(message(error)))
+                .finally(() => {
+                  busyRef.current = false;
+                  setBusy(false);
+                });
+            }}
+          >
+            <Icon name="logout" />
+          </button>
+        </div>
+      </header>
+      <section
+        className="main-content stream-shell"
+        aria-label="Stream management"
+      >
+        <div className="panel stream-manager">
+          <div className="stream-toolbar">
+            <div>
+              <span className="eyebrow amber">SIGNAL DIRECTORY</span>
+              <h2>
+                Streams{" "}
+                <span className="mono subdued">
+                  {streams
+                    ? `${streams.active_count} / ${limit} active`
+                    : "Connecting"}
+                </span>
+              </h2>
+            </div>
+            <div className="stream-actions">
+              <button
+                className="button small primary"
+                disabled={atLimit || !!error || busy}
+                onClick={() => open("add")}
+              >
+                Add stream
+              </button>
+              <button
+                className="button small"
+                disabled={!selected || busy}
+                onClick={() => open("rename")}
+              >
+                Rename stream
+              </button>
+              <button
+                className="button small"
+                disabled={archiveBlocked || busy}
+                onClick={() => open("archive")}
+              >
+                Archive stream
+              </button>
+            </div>
+          </div>
+          <p className="input-help">
+            Selection only changes this view. All active streams keep running
+            independently.
+          </p>
+          {streams && (
+            <div
+              className="stream-grid"
+              role="group"
+              aria-label="Active streams"
+            >
+              {streams.items
+                .filter((item) => !item.archived_at)
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    className={`stream-card ${item.id === selectedId ? "selected" : ""}`}
+                    aria-pressed={item.id === selectedId}
+                    onClick={() => setSelectedId(item.id)}
+                  >
+                    <strong>{item.name}</strong>
+                    <span>
+                      <span
+                        className={`status-dot ${!error && item.online ? "green" : ""}`}
+                      />
+                      {error
+                        ? "Status unavailable"
+                        : !item.media_available
+                          ? "Media unavailable"
+                          : item.online
+                            ? "Online"
+                            : "Offline"}
+                      {item.is_default ? " / Default" : ""}
+                    </span>
+                    <span className={item.recording ? "amber" : "subdued"}>
+                      {error
+                        ? "Reconnecting"
+                        : item.recording
+                          ? "Recording"
+                          : "Not recording"}{" "}
+                      / {item.bitrate_mbps.toFixed(2)} Mbps
+                    </span>
+                  </button>
+                ))}
+            </div>
+          )}
+          {streams?.items.some((item) => item.archived_at) && (
+            <div className="archive-selector">
+              <label htmlFor="archived-stream">Archived history</label>
+              <select
+                id="archived-stream"
+                value={selected?.archived_at ? selectedId : ""}
+                onChange={(event) => {
+                  if (event.target.value) setSelectedId(event.target.value);
+                }}
+              >
+                <option value="">Choose an archived stream</option>
+                {streams.items
+                  .filter((item) => item.archived_at)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} / Preserved history
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
+          {atLimit && streams && (
+            <p className="input-help">
+              All {limit} active slots are in use. Archive an offline stream to
+              add another.
+            </p>
+          )}
+          {selected?.is_default && (
+            <p className="input-help">
+              The original default stream can be renamed, but cannot be
+              archived.
+            </p>
+          )}
+          {selected &&
+            !selected.is_default &&
+            !selected.archived_at &&
+            archiveBlocked && (
+              <p className="input-help">
+                Archiving requires an offline stream, no recording, and an
+                available media service.
+              </p>
+            )}
+          {error && (
+            <div className="notice danger" role="alert">
+              Stream directory unavailable. Retrying automatically. {error}
+            </div>
+          )}
+        </div>
+      </section>
+      {selected ? (
+        <Dashboard
+          key={`${selected.id}:${!!selected.archived_at}`}
+          stream={selected}
+          request={request}
+          onUnauthorized={onUnauthorized}
+        />
+      ) : (
+        <Loading text="Loading streams" />
+      )}
+      {form && (
+        <Modal
+          title={
+            form.kind === "add"
+              ? "Add stream"
+              : form.kind === "rename"
+                ? "Rename stream"
+                : "Archive stream?"
+          }
+          onClose={() => {
+            if (!busy) setForm(null);
+          }}
+        >
+          <form
+            onSubmit={(event) => {
+              void submit(event);
+            }}
+          >
+            {form.kind === "archive" ? (
+              <p className="modal-body">
+                Archive {form.stream?.name}? Faces, sessions, and recordings are
+                preserved in Archived history. Live publishing, recording,
+                analysis, and key rotation will be disabled. This cannot be
+                undone. The server will check for pending publishers before
+                archiving.
+              </p>
+            ) : (
+              <div className="stream-name-field">
+                <label htmlFor="stream-name">Stream name</label>
+                <input
+                  id="stream-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                  maxLength={64}
+                  autoFocus
+                  disabled={busy}
+                />
+                <p className="input-help">
+                  1-64 characters. Names do not change publishing credentials.
+                </p>
+              </div>
+            )}
+            {formError && (
+              <div className="notice danger" role="alert">
+                {formError}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button"
+                disabled={busy}
+                onClick={() => setForm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className={`button ${form.kind === "archive" ? "destructive" : "primary"}`}
+                disabled={
+                  busy ||
+                  (form.kind !== "archive" && !name.trim()) ||
+                  (form.kind === "add" && atLimit)
+                }
+              >
+                {busy
+                  ? "Working..."
+                  : form.kind === "archive"
+                    ? "Archive stream"
+                    : form.kind === "add"
+                      ? "Add stream"
+                      : "Save name"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({
+  stream,
+  request: globalRequest,
+  onUnauthorized,
+}: {
+  stream: Stream;
+  request: Request;
+  onUnauthorized: () => void;
+}) {
+  // The keyed dashboard keeps in-flight mutations bound to their original stream.
+  const [request] = useState(() => scopeRequest(globalRequest, stream.id));
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState("");
   const [lastSync, setLastSync] = useState<string | null>(null);
@@ -408,12 +814,17 @@ function Dashboard({
     }
   }
 
-  const available = !!status && !statusError && status.media_available;
-  const live = !!status?.online;
-  const recording = status?.recording;
-  const controlsDisabled = !status || !!statusError || busy !== null;
+  const archived =
+    !!stream.archived_at || !!status?.archived || !!catalog?.settings.archived;
+  const available =
+    !archived && !!status && !statusError && status.media_available;
+  const live = !archived && !!status?.online;
+  const recording = archived ? null : status?.recording;
+  const controlsDisabled =
+    archived || !status || !!statusError || busy !== null;
   const analysisEnabled =
-    status?.analysis.enabled ?? catalog?.settings.analysis_enabled ?? false;
+    !archived &&
+    (status?.analysis.enabled ?? catalog?.settings.analysis_enabled ?? false);
 
   function deleteFace(face: Face) {
     setConfirmation({
@@ -482,34 +893,6 @@ function Dashboard({
 
   return (
     <div className="dashboard">
-      <header className="app-header">
-        <Brand />
-        <div className="workspace-label">
-          <span className="header-divider" />
-          PRIVATE WORKSPACE<span className="workspace-slash">/</span>
-          <span>Overview</span>
-        </div>
-        <div className="header-actions">
-          <span className="secure-label">
-            <Icon name="lock" size={13} />
-            SECURE SESSION
-          </span>
-          <button
-            className="icon-button"
-            title="Sign out"
-            aria-label="Sign out"
-            disabled={busy !== null}
-            onClick={() => {
-              void act("logout", async () => {
-                await request("/api/auth/logout", { method: "POST" });
-                onLogout();
-              });
-            }}
-          >
-            <Icon name="logout" />
-          </button>
-        </div>
-      </header>
       <main className="main-content">
         <div className="page-heading">
           <div>
@@ -520,7 +903,12 @@ function Dashboard({
             <h1>
               Broadcast workspace<span className="heading-dot">.</span>
             </h1>
-            <p>Your signal, sessions, and intelligence in one place.</p>
+            <p className="selected-stream-name">
+              {stream.name} /{" "}
+              {archived
+                ? "Preserved history"
+                : "Your signal, sessions, and intelligence in one place."}
+            </p>
           </div>
           <div
             className={`connection-pill ${statusError ? "error" : live ? "live" : ""}`}
@@ -528,17 +916,26 @@ function Dashboard({
             <span
               className={`status-dot ${live && !statusError ? "glow" : ""}`}
             />
-            {statusError
-              ? "Connection lost"
-              : !status
-                ? "Connecting"
-                : live
-                  ? "Stream online"
-                  : "Stream offline"}
+            {archived
+              ? "Archived stream"
+              : statusError
+                ? "Connection lost"
+                : !status
+                  ? "Connecting"
+                  : live
+                    ? "Stream online"
+                    : "Stream offline"}
             <span className="pill-divider" />
-            {live && !statusError ? "ON AIR" : "STANDBY"}
+            {archived ? "HISTORY" : live && !statusError ? "ON AIR" : "STANDBY"}
           </div>
         </div>
+        {archived && (
+          <div className="notice warning" role="status">
+            Preserved history mode. Faces, sessions, and recordings remain
+            available to view or delete. Live publishing, recording, analysis,
+            and key rotation are disabled.
+          </div>
+        )}
         {statusError && (
           <div className="notice danger" role="alert">
             <Icon name="alert" />
@@ -578,15 +975,25 @@ function Dashboard({
                   <span>Live monitor</span>
                 </h2>
                 <span className="mono subdued">
-                  INPUT 01 <span className="tiny-divider">/</span> HLS
+                  {stream.name} <span className="tiny-divider">/</span> HLS
                 </span>
               </div>
-              <LivePlayer
-                online={live}
-                available={status ? status.media_available : true}
-                session={status?.session_id ?? null}
-                onUnauthorized={onUnauthorized}
-              />
+              {archived ? (
+                <div className="live-player archive-preview">
+                  <Empty icon="video" title="Archived stream">
+                    Live preview is disabled. Browse preserved faces, sessions,
+                    and recordings in the tools panel.
+                  </Empty>
+                </div>
+              ) : (
+                <LivePlayer
+                  manifestUrl={`/api/streams/${encodeURIComponent(stream.id)}/live/index.m3u8`}
+                  online={live}
+                  available={status ? status.media_available : true}
+                  session={status?.session_id ?? null}
+                  onUnauthorized={onUnauthorized}
+                />
+              )}
               <div className="preview-footer">
                 <div className="stream-description">
                   <span className={`status-dot ${live ? "green" : ""}`} />
@@ -878,7 +1285,7 @@ function Dashboard({
                       onClick={() =>
                         setConfirmation({
                           title: "Clear the entire face catalog?",
-                          body: "This deletes all faces across every session, including thumbnails, embeddings, and sightings. The selected session filter does not limit this action. New faces may appear while analysis is enabled.",
+                          body: `This deletes all faces across every session of ${stream.name}, including thumbnails, embeddings, and sightings. Other streams are unaffected. The selected session filter does not limit this action. New faces may appear while analysis is enabled.`,
                           label: "Delete all faces",
                           action: async () => {
                             await request("/api/faces", { method: "DELETE" });
@@ -913,9 +1320,11 @@ function Dashboard({
                     <Empty icon="faces" title="No faces yet">
                       {session
                         ? "No faces have been detected in this session. Try another session or view the full catalog."
-                        : analysisEnabled
-                          ? "Faces will appear here as the analysis worker detects them in your live broadcast."
-                          : "Enable face analysis and start a stream to build your face catalog."}
+                        : archived
+                          ? "There are no preserved faces for this stream."
+                          : analysisEnabled
+                            ? "Faces will appear here as the analysis worker detects them in your live broadcast."
+                            : "Enable face analysis and start a stream to build your face catalog."}
                     </Empty>
                   ) : (
                     <div className="face-list">
@@ -993,9 +1402,9 @@ function Dashboard({
                     <Loading text="Loading recordings" />
                   ) : !catalog.recordings.length ? (
                     <Empty icon="video" title="Your archive starts here">
-                      Start a manual recording while your stream is online.
-                      Completed captures will appear here for playback and
-                      download.
+                      {archived
+                        ? "There are no preserved recordings for this stream."
+                        : "Start a manual recording while your stream is online. Completed captures will appear here for playback and download."}
                     </Empty>
                   ) : (
                     <div className="recording-list">
@@ -1100,7 +1509,15 @@ function Dashboard({
                     <Loading text="Loading stream settings" />
                   ) : (
                     <SettingsPanel
-                      settings={catalog.settings}
+                      settings={
+                        archived
+                          ? {
+                              ...catalog.settings,
+                              archived: true,
+                              stream_key: "",
+                            }
+                          : catalog.settings
+                      }
                       busy={busy !== null}
                       canRegenerate={available && !live && busy === null}
                       onCopy={(error) =>
@@ -1152,61 +1569,62 @@ function Dashboard({
           </span>
         </footer>
       </main>
-      {confirmation && (
-        <Modal
-          title={confirmation.title}
-          onClose={() => {
-            if (!busy) {
-              setConfirmation(null);
-              setFeedback(null);
-            }
-          }}
-        >
-          <p className="modal-body">{confirmation.body}</p>
-          {feedback?.error && (
-            <div className="notice danger" role="alert">
-              {feedback.text}
-            </div>
-          )}
-          <div className="modal-actions">
-            <button
-              className="button"
-              disabled={busy !== null}
-              onClick={() => {
+      {confirmation &&
+        !(archived && confirmation.label === "Regenerate key") && (
+          <Modal
+            title={confirmation.title}
+            onClose={() => {
+              if (!busy) {
                 setConfirmation(null);
                 setFeedback(null);
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              className="button destructive"
-              disabled={busy !== null}
-              onClick={() => {
-                void act(
-                  "confirm",
-                  confirmation.action,
-                  "Action completed successfully.",
-                );
-              }}
-            >
-              {busy === "confirm" ? (
-                <span className="spinner" />
-              ) : (
-                <Icon
-                  name={
-                    confirmation.label === "Regenerate key"
-                      ? "refresh"
-                      : "trash"
-                  }
-                  size={16}
-                />
-              )}
-              {busy === "confirm" ? "Working..." : confirmation.label}
-            </button>
-          </div>
-        </Modal>
-      )}
+              }
+            }}
+          >
+            <p className="modal-body">{confirmation.body}</p>
+            {feedback?.error && (
+              <div className="notice danger" role="alert">
+                {feedback.text}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button
+                className="button"
+                disabled={busy !== null}
+                onClick={() => {
+                  setConfirmation(null);
+                  setFeedback(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="button destructive"
+                disabled={busy !== null}
+                onClick={() => {
+                  void act(
+                    "confirm",
+                    confirmation.action,
+                    "Action completed successfully.",
+                  );
+                }}
+              >
+                {busy === "confirm" ? (
+                  <span className="spinner" />
+                ) : (
+                  <Icon
+                    name={
+                      confirmation.label === "Regenerate key"
+                        ? "refresh"
+                        : "trash"
+                    }
+                    size={16}
+                  />
+                )}
+                {busy === "confirm" ? "Working..." : confirmation.label}
+              </button>
+            </div>
+          </Modal>
+        )}
       {playback && (
         <Modal
           title="Recording playback"
@@ -1431,85 +1849,100 @@ function SettingsPanel({
   }
   return (
     <>
-      <div className="settings-section">
-        <h3>
-          <span className="step-label">01</span>Encoder connection
-        </h3>
-        <p>
-          In OBS or your encoder, choose a custom RTMP service and enter these
-          credentials.
-        </p>
-        <label htmlFor="rtmp-url">Server URL</label>
-        <div className="credential-field">
-          <input
-            id="rtmp-url"
-            readOnly
-            value={settings.rtmp_url}
-            spellCheck={false}
-          />
-          <button
-            className="icon-button"
-            aria-label="Copy RTMP server URL"
-            onClick={() => {
-              void copy(settings.rtmp_url);
-            }}
-          >
-            <Icon name="copy" size={16} />
+      {settings.archived ? (
+        <div className="settings-section">
+          <h3>Encoder connection disabled</h3>
+          <p>
+            Archived streams have no publishing credentials. Preserved history
+            remains accessible.
+          </p>
+          <button className="button small" disabled>
+            Regenerate stream key
           </button>
         </div>
-        <label htmlFor="stream-key">
-          Stream key
-          <span className="label-tag">
-            <Icon name="lock" size={11} />
-            SECRET
-          </span>
-        </label>
-        <div className="credential-field">
-          <input
-            id="stream-key"
-            type={revealed ? "text" : "password"}
-            readOnly
-            value={settings.stream_key}
-            autoComplete="off"
-            spellCheck={false}
-          />
+      ) : (
+        <div className="settings-section">
+          <h3>
+            <span className="step-label">01</span>Encoder connection
+          </h3>
+          <p>
+            In OBS or your encoder, choose a custom RTMP service and enter these
+            credentials.
+          </p>
+          <label htmlFor="rtmp-url">Server URL</label>
+          <div className="credential-field">
+            <input
+              id="rtmp-url"
+              readOnly
+              value={settings.rtmp_url}
+              spellCheck={false}
+            />
+            <button
+              className="icon-button"
+              aria-label="Copy RTMP server URL"
+              onClick={() => {
+                void copy(settings.rtmp_url);
+              }}
+            >
+              <Icon name="copy" size={16} />
+            </button>
+          </div>
+          <label htmlFor="stream-key">
+            Stream key
+            <span className="label-tag">
+              <Icon name="lock" size={11} />
+              SECRET
+            </span>
+          </label>
+          <div className="credential-field">
+            <input
+              id="stream-key"
+              type={revealed ? "text" : "password"}
+              readOnly
+              value={settings.stream_key}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              className="icon-button"
+              aria-label={
+                revealed
+                  ? "Hide stream key"
+                  : "Reveal stream key for 30 seconds"
+              }
+              aria-pressed={revealed}
+              onClick={() => setRevealed((value) => !value)}
+            >
+              <Icon name="eye" size={16} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Copy entire stream key"
+              onClick={() => {
+                void copy(settings.stream_key);
+              }}
+            >
+              <Icon name="copy" size={16} />
+            </button>
+          </div>
+          <p className="input-help">
+            Copy the entire key, including its query parameters. Keep it
+            private. Revealed keys hide automatically after 30 seconds.
+          </p>
           <button
-            className="icon-button"
-            aria-label={
-              revealed ? "Hide stream key" : "Reveal stream key for 30 seconds"
-            }
-            aria-pressed={revealed}
-            onClick={() => setRevealed((value) => !value)}
+            className="button small"
+            disabled={busy || !canRegenerate}
+            onClick={onRegenerate}
           >
-            <Icon name="eye" size={16} />
+            <Icon name="refresh" size={15} />
+            Regenerate stream key
           </button>
-          <button
-            className="icon-button"
-            aria-label="Copy entire stream key"
-            onClick={() => {
-              void copy(settings.stream_key);
-            }}
-          >
-            <Icon name="copy" size={16} />
-          </button>
+          <p className="input-help">
+            Available only while the stream is offline and the media service is
+            reachable.
+          </p>
         </div>
-        <p className="input-help">
-          Copy the entire key, including its query parameters. Keep it private.
-          Revealed keys hide automatically after 30 seconds.
-        </p>
-        <button
-          className="button small"
-          disabled={busy || !canRegenerate}
-          onClick={onRegenerate}
-        >
-          <Icon name="refresh" size={15} />
-          Regenerate stream key
-        </button>
-        <p className="input-help">
-          Available only while the stream is offline and the media service is
-          reachable.
-        </p>
-      </div>
+      )}
       <div className="settings-section">
         <h3>
           <span className="step-label">02</span>Analysis configuration
@@ -1528,7 +1961,7 @@ function SettingsPanel({
           <Setting label="Face retention">
             {settings.face_retention_days} days
           </Setting>
-          <Setting label="Maximum stored faces">
+          <Setting label="Maximum stored faces (all streams)">
             {settings.max_faces.toLocaleString()}
           </Setting>
         </dl>

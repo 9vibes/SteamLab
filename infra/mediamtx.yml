@@ -41,6 +41,7 @@ pathDefaults:
   recordDeleteAfter: 0s
 
 paths:
-  live/stream:
+  # The database/auth callback permits at most four registered, active streams.
+  "~^live/(stream|stream-[a-f0-9]{32})$":
     source: publisher
     overridePublisher: no
