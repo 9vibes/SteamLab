@@ -8,7 +8,12 @@ keyboard entry/Escape/focus restoration, inert background controls, responsive
 320/390/801/1440-pixel layouts, stream management, continued directory polling,
 and retained native/HLS players without recording or analysis mutations. Gallery
 screenshots were regenerated and inspected. Backend behavior is unchanged.
-Release CI and image verification are separate publication gates.
+The [1.2.1 release workflow](https://github.com/9vibes/SteamLab/actions/runs/34802529083)
+passed on Python 3.10 and 3.12, including native model checks and 41 browser tests.
+All four image variants built and published successfully. Every layer of the web,
+backend, and CUDA worker images was downloaded anonymously and SHA256-verified
+before updating the Umbrel package. Target-host installation and GPU throughput
+remain deployment checks.
 
 Implementation checks performed on September 13-14, 2026. This is not a claim of
 production deployment or measured face-recognition accuracy.
