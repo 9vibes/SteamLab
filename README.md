@@ -1,5 +1,9 @@
 # KUNAS/Labs
 
+**1.2.1:** Signal Directory now opens from the sidebar, leaving more room above
+the video grid. Stream selection and management remain available in its drawer;
+opening or closing it does not interrupt playback, recording, or analysis.
+
 Self-hosted OBS monitoring with an authenticated browser dashboard, live HLS playback,
 MP4 recording, and optional face grouping. Version 1.2.0 supports Multi-view and
 default-on automatic recording for up to four active feeds under one administrator password, not

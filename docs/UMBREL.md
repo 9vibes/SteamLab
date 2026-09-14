@@ -111,6 +111,11 @@ separately from historical release results in [VERIFICATION.md](VERIFICATION.md)
 
 ## First launch
 
+In 1.2.1, open **Signal Directory** from the left sidebar to select, add, rename,
+or archive streams. The drawer starts closed; on mobile its entry is a compact
+button above the workspace. Escape or Close returns focus to that entry. Selecting
+a feed closes the drawer without stopping any server-side activity.
+
 1. Open KUNAS/Labs from Umbrel. The browser port is **28081**.
 2. Use the generated application password shown by Umbrel. No username is required.
 3. In Settings, copy the server URL and the complete stream key into OBS.
@@ -155,15 +160,16 @@ directory while stopped; it contains sensitive face thumbnails and embeddings.
 
 ## Image releases
 
-The `v1.2.0` release workflow will run backend, native CPU model parity, and browser
-checks before publishing amd64 images to GHCR. The 1.2.0 image references are:
+The release workflow runs backend, native CPU model parity, and browser checks
+before publishing amd64 images to GHCR. The 1.2.1 image references are:
 
-- `ghcr.io/9vibes/steamlab-web:1.2.0`
-- `ghcr.io/9vibes/steamlab-backend:1.2.0`
-- `ghcr.io/9vibes/steamlab-worker:1.2.0-cpu`
-- `ghcr.io/9vibes/steamlab-worker:1.2.0-cuda`
+- `ghcr.io/9vibes/steamlab-web:1.2.1`
+- `ghcr.io/9vibes/steamlab-backend:1.2.1`
+- `ghcr.io/9vibes/steamlab-worker:1.2.1-cpu`
+- `ghcr.io/9vibes/steamlab-worker:1.2.1-cuda`
 
-Version 1.2.0 adds Multi-view and default-on automatic recording while retaining
+Version 1.2.1 adds the Signal Directory sidebar and retains 1.2.0's Multi-view and
+default-on automatic recording, together with
 1.1.0's four independent streams, recording and catalog isolation, and bounded
 shared-engine analysis. It retains the CUDA 12.4.1/cuDNN 9.1 and FFmpeg 4.4 RTSP
 compatibility fixes from 1.0.3. The `kunas-steamlab` app ID, repository/image names,
@@ -174,7 +180,7 @@ the stopped app, and re-enable analysis afterward only if wanted.
 The Umbrel package uses the CUDA image and pins published image digests. Packages
 must permit anonymous pulls before a store update is published. Repository visibility
 alone does not guarantee GitHub Container Registry package visibility.
-The local and release-CI results for 1.2.0, including image publication and anonymous
+Local and release-CI results, including image publication and anonymous
 layer verification, are recorded in [VERIFICATION.md](VERIFICATION.md). Target-host
 GPU and installed Umbrel smoke tests remain deployment checks.
 
@@ -183,9 +189,9 @@ layer without retaining it, run with the backend Python dependencies installed:
 
 ```sh
 python scripts/verify_images.py --pull \
-  ghcr.io/9vibes/steamlab-web:1.2.0 \
-  ghcr.io/9vibes/steamlab-backend:1.2.0 \
-  ghcr.io/9vibes/steamlab-worker:1.2.0-cuda
+  ghcr.io/9vibes/steamlab-web:1.2.1 \
+  ghcr.io/9vibes/steamlab-backend:1.2.1 \
+  ghcr.io/9vibes/steamlab-worker:1.2.1-cuda
 ```
 
 This helper does not use GitHub credentials or Docker's credential configuration.

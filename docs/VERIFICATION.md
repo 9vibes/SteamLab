@@ -1,5 +1,15 @@
 # Verification
 
+## Signal Directory sidebar (1.2.1)
+
+The sidebar change passed 41 Chromium browser tests, the frontend production
+build, and diff whitespace checks locally. Tests cover a closed-by-default drawer,
+keyboard entry/Escape/focus restoration, inert background controls, responsive
+320/390/801/1440-pixel layouts, stream management, continued directory polling,
+and retained native/HLS players without recording or analysis mutations. Gallery
+screenshots were regenerated and inspected. Backend behavior is unchanged.
+Release CI and image verification are separate publication gates.
+
 Implementation checks performed on September 13-14, 2026. This is not a claim of
 production deployment or measured face-recognition accuracy.
 

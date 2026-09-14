@@ -364,6 +364,377 @@ async function server(
   };
 }
 
+async function openDirectory(page: Page) {
+  const dialog = page.getByRole("dialog", {
+    name: "Signal Directory",
+    exact: true,
+  });
+  if (!(await dialog.isVisible()))
+    await page
+      .getByRole("button", { name: "Signal Directory", exact: true })
+      .click();
+  await expect(dialog).toBeVisible();
+  return dialog.getByRole("region", { name: "Stream management", exact: true });
+}
+
+test("Signal Directory starts closed, replaces the top box, and restores keyboard focus to its associated rail", async ({
+  page,
+}) => {
+  const backend = await server(page, {
+    streams: [defaultStream, secondStream],
+  });
+  await page.goto("/");
+  const rail = page.getByRole("button", {
+    name: "Signal Directory",
+    exact: true,
+    includeHidden: true,
+  });
+  const sidebar = page.getByRole("complementary", {
+    name: "Workspace sidebar",
+  });
+  await expect(
+    sidebar.getByRole("button", { name: "Signal Directory", exact: true }),
+  ).toHaveCount(1);
+  await expect(rail).toHaveAttribute("aria-haspopup", "dialog");
+  await expect(rail).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    page.getByRole("heading", { name: "Broadcast workspace." }),
+  ).toBeVisible();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("region", {
+      name: "Stream management",
+      includeHidden: true,
+    }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("main").locator(".stream-shell")).toHaveCount(0);
+  for (const name of ["Add stream", "Rename stream", "Archive stream"])
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(
+      0,
+    );
+
+  await rail.focus();
+  await page.keyboard.press("Enter");
+  const directory = await openDirectory(page);
+  const dialog = page.getByRole("dialog", {
+    name: "Signal Directory",
+    exact: true,
+  });
+  await expect(page.locator("dialog")).toHaveCount(1);
+  expect(await dialog.evaluate((element) => element.matches(":modal"))).toBe(
+    true,
+  );
+  await expect(rail).toHaveAttribute("aria-expanded", "true");
+  const controls = await rail.getAttribute("aria-controls");
+  expect(controls).toBeTruthy();
+  await expect(dialog).toHaveAttribute("id", controls!);
+  await uniqueIds(page);
+  await expect(
+    directory
+      .getByRole("group", { name: "Active streams" })
+      .getByRole("button"),
+  ).toHaveCount(2);
+  const close = dialog.getByRole("button", {
+    name: "Close dialog",
+    exact: true,
+  });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  // Native dialogs may tab through browser chrome, but page controls remain inert.
+  const background = page.getByRole("button", {
+    name: "Multi-view",
+    exact: true,
+    includeHidden: true,
+  });
+  await background.evaluate((element: HTMLButtonElement) => element.focus());
+  await expect(background).not.toBeFocused();
+  await close.focus();
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(rail).toHaveAttribute("aria-expanded", "false");
+  await expect(rail).toBeFocused();
+
+  await page.keyboard.press("Space");
+  await expect(dialog).toHaveAttribute("id", controls!);
+  await close.click();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(rail).toBeFocused();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Stream 1 Offline/ })
+    .click();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(rail).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Stream 1 workspace", exact: true }),
+  ).toBeVisible();
+  expect(backend.calls.filter((call) => call.method !== "GET")).toEqual([]);
+});
+
+test("closed directory keeps polling, updates the rail count, and exposes directory errors globally", async ({
+  page,
+}) => {
+  const backend = await server(page, {
+    streams: [defaultStream, secondStream],
+  });
+  let activeCount = 2;
+  let unavailable = false;
+  let polls = 0;
+  await page.route("**/api/streams", (route) => {
+    polls++;
+    return route.fulfill({
+      status: unavailable ? 503 : 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        unavailable
+          ? { detail: "Directory fixture unavailable" }
+          : {
+              items: [
+                defaultStream,
+                {
+                  ...secondStream,
+                  archived_at:
+                    activeCount === 1 ? "2026-09-13T13:00:00Z" : null,
+                },
+              ],
+              max_streams: 4,
+              active_count: activeCount,
+            },
+      ),
+    });
+  });
+  await page.goto("/");
+  const rail = page.getByRole("button", {
+    name: "Signal Directory",
+    exact: true,
+  });
+  await expect(rail).toContainText("2/4");
+  const before = polls;
+  activeCount = 1;
+  await expect(rail).toContainText("1/4", { timeout: 7000 });
+  expect(polls).toBeGreaterThan(before);
+  await expect(rail).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("dialog")).toHaveCount(0);
+
+  unavailable = true;
+  const alert = page.getByRole("main").getByRole("alert");
+  await expect(alert).toContainText(
+    "Stream directory unavailable. Retrying automatically. Directory fixture unavailable",
+    { timeout: 7000 },
+  );
+  await expect(alert).toBeVisible();
+  await expect(rail).toContainText("!");
+  await expect(rail).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "No faces yet" }),
+  ).toBeVisible();
+
+  const directory = await openDirectory(page);
+  await expect(directory.getByRole("alert")).toContainText(
+    "Directory fixture unavailable",
+  );
+  await expect(
+    directory.getByRole("button", { name: "Add stream", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    directory.getByRole("button", { name: /^Stream 1 Status unavailable/ }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(alert).toBeVisible();
+  unavailable = false;
+  activeCount = 2;
+  await expect(rail).toContainText("2/4", { timeout: 7000 });
+  await expect(alert).toHaveCount(0);
+  await expect(page.locator("dialog")).toHaveCount(0);
+  expect(backend.calls.filter((call) => call.method !== "GET")).toEqual([]);
+});
+
+test("management forms replace the drawer, focus their controls, and cancel back to the unchanged workspace and rail", async ({
+  page,
+}) => {
+  const backend = await server(page, {
+    streams: [defaultStream, secondStream],
+  });
+  await page.goto("/");
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Offline/ })
+    .click();
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page
+    .getByRole("button", { name: "Reveal stream key for 30 seconds" })
+    .click();
+  const key = page.getByLabel("Stream key SECRET", { exact: true });
+  await expect(key).toHaveAttribute("type", "text");
+  const input = await key.elementHandle();
+  for (const [action, title] of [
+    ["Add stream", "Add stream"],
+    ["Rename stream", "Rename stream / Studio B"],
+    ["Archive stream", "Archive stream? / Studio B"],
+  ]) {
+    await (await openDirectory(page))
+      .getByRole("button", { name: action, exact: true })
+      .click();
+    const form = page.getByRole("dialog", { name: title, exact: true });
+    await expect(form).toBeVisible();
+    await expect(page.locator("dialog")).toHaveCount(1);
+    await expect(
+      page.getByRole("dialog", { name: "Signal Directory", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", {
+        name: "Signal Directory",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
+    if (action === "Archive stream") {
+      await expect(
+        form.getByRole("button", { name: "Close dialog", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(
+        form.getByRole("button", { name: "Cancel", exact: true }),
+      ).toBeFocused();
+    } else {
+      await expect(form.getByLabel("Stream name")).toBeFocused();
+      await expect(form.getByLabel("Stream name")).toHaveValue(
+        action === "Add stream" ? "" : "Studio B",
+      );
+      await form.getByLabel("Stream name").fill("Unsaved name");
+    }
+    await form.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.locator("dialog")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Signal Directory", exact: true }),
+    ).toBeFocused();
+    await expect(page.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(key).toHaveAttribute("type", "text");
+    await expect(key).toHaveValue(
+      `${secondStream.id}?user=publisher&pass=second-secret`,
+    );
+    expect(await input!.evaluate((element) => element.isConnected)).toBe(true);
+    await expect(page.locator(".selected-stream-name")).toContainText(
+      "Studio B",
+    );
+  }
+  expect(backend.calls.filter((call) => call.method !== "GET")).toEqual([]);
+});
+
+for (const width of [320, 390, 801, 1440]) {
+  test(`Signal Directory fits ${width}px with scrollable cards, accessible controls, and a compact mobile rail`, async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const backend = await server(page, {
+      streams: [
+        defaultStream,
+        secondStream,
+        { ...secondStream, id: "long-c", name: "C".repeat(64) },
+        { ...secondStream, id: "long-d", name: "D".repeat(64) },
+        {
+          ...secondStream,
+          id: "archived",
+          name: "Former studio",
+          archived_at: "2026-09-13T13:00:00Z",
+        },
+      ],
+    });
+    await page.setViewportSize({ width, height: 640 });
+    await page.goto("/");
+    const rail = page.getByRole("button", {
+      name: "Signal Directory",
+      exact: true,
+    });
+    await expect(rail).toContainText("4/4");
+    const sidebar = (await page
+      .getByRole("complementary", { name: "Workspace sidebar" })
+      .boundingBox())!;
+    const main = (await page.getByRole("main").boundingBox())!;
+    if (width <= 800) {
+      expect(sidebar.height).toBeLessThanOrEqual(80);
+      expect(sidebar.y + sidebar.height).toBeLessThanOrEqual(main.y);
+      expect(
+        await rail.evaluate(
+          (element) => getComputedStyle(element).flexDirection,
+        ),
+      ).toBe("row");
+    } else {
+      expect(sidebar.x + sidebar.width).toBeLessThanOrEqual(main.x);
+    }
+    const directory = await openDirectory(page);
+    const dialog = page.getByRole("dialog", {
+      name: "Signal Directory",
+      exact: true,
+    });
+    const box = (await dialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.y + box.height).toBeLessThanOrEqual(640);
+    expect(
+      await dialog.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await dialog.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      ),
+    ).toBe(true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expect(
+      directory
+        .getByRole("group", { name: "Active streams" })
+        .getByRole("button"),
+    ).toHaveCount(4);
+    if (width === 1440 || width === 390)
+      await page.screenshot({
+        path: test.info().outputPath(`signal-directory-${width}.png`),
+        fullPage: true,
+      });
+
+    for (const control of await dialog
+      .getByRole("button")
+      .or(dialog.getByRole("combobox"))
+      .all()) {
+      await control.scrollIntoViewIfNeeded();
+      await expect(control).toBeInViewport();
+      const bounds = (await control.boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(box.x);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(box.x + box.width);
+      if (await control.isEnabled()) {
+        await control.focus();
+        await expect(control).toBeFocused();
+        await control.click({ trial: true });
+      }
+    }
+    expect(
+      await dialog.evaluate((element) => element.scrollTop),
+    ).toBeGreaterThan(0);
+    await dialog
+      .getByRole("button", { name: "Close dialog", exact: true })
+      .click();
+    await expect(page.locator("dialog")).toHaveCount(0);
+    await expect(rail).toBeFocused();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    expect(backend.calls.filter((call) => call.method !== "GET")).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+}
+
 test("password login, CSRF mutation, keyboard tabs, and logout", async ({
   page,
 }) => {
@@ -745,7 +1116,9 @@ test("add streams up to four, select the new stream, and enforce the UI limit", 
   const backend = await server(page);
   await page.goto("/");
   for (const name of ["Studio B", "Studio C", "Studio D"]) {
-    await page.getByRole("button", { name: "Add stream", exact: true }).click();
+    await (await openDirectory(page))
+      .getByRole("button", { name: "Add stream", exact: true })
+      .click();
     const dialog = page.getByRole("dialog", { name: "Add stream" });
     await expect(dialog.getByLabel("Stream name")).toBeFocused();
     await dialog.getByLabel("Stream name").fill(`  ${name}  `);
@@ -754,16 +1127,24 @@ test("add streams up to four, select the new stream, and enforce the UI limit", 
       .click();
     await expect(dialog).not.toBeVisible();
     await expect(
-      page.getByRole("button", { name: new RegExp(`^${name} Offline`) }),
-    ).toHaveAttribute("aria-pressed", "true");
+      page.getByRole("button", { name: "Signal Directory", exact: true }),
+    ).toBeFocused();
     await expect(page.locator(".selected-stream-name")).toContainText(name);
+    await expect(
+      (await openDirectory(page)).getByRole("button", {
+        name: new RegExp(`^${name} Offline`),
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
   }
-  await expect(page.getByText("4 / 4 active", { exact: true })).toBeVisible();
+  const directory = await openDirectory(page);
   await expect(
-    page.getByRole("button", { name: "Add stream", exact: true }),
+    directory.getByText("4 / 4 active", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    directory.getByRole("button", { name: "Add stream", exact: true }),
   ).toBeDisabled();
   await expect(
-    page.getByText("All 4 active slots are in use.", { exact: false }),
+    directory.getByText("All 4 active slots are in use.", { exact: false }),
   ).toBeVisible();
   const additions = backend.calls.filter(
     (call) => call.method === "POST" && call.path === "/api/streams",
@@ -794,9 +1175,12 @@ test("add shows server limit errors and keeps the accessible form open", async (
     });
   });
   await page.goto("/");
-  const add = page.getByRole("button", { name: "Add stream", exact: true });
+  const add = (await openDirectory(page)).getByRole("button", {
+    name: "Add stream",
+    exact: true,
+  });
   await add.click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("dialog", { name: "Add stream", exact: true });
   await dialog.getByLabel("Stream name").fill("Another studio");
   await dialog.getByRole("button", { name: "Add stream", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveText(
@@ -804,7 +1188,9 @@ test("add shows server limit errors and keeps the accessible form open", async (
   );
   await expect(dialog.getByLabel("Stream name")).toHaveValue("Another studio");
   await page.keyboard.press("Escape");
-  await expect(add).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Signal Directory", exact: true }),
+  ).toBeFocused();
 });
 
 test("rename preserves the default stream identity, credentials, and archive guard", async ({
@@ -813,14 +1199,23 @@ test("rename preserves the default stream identity, credentials, and archive gua
   const backend = await server(page);
   await page.goto("/");
   await expect(
-    page.getByRole("button", { name: "Archive stream", exact: true }),
+    (await openDirectory(page)).getByRole("button", {
+      name: "Archive stream",
+      exact: true,
+    }),
   ).toBeDisabled();
+  await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "Settings" }).click();
   await expect(
     page.getByLabel("Stream key SECRET", { exact: true }),
   ).toHaveValue(settings.stream_key);
-  await page.getByRole("button", { name: "Rename stream" }).click();
-  const dialog = page.getByRole("dialog");
+  await (await openDirectory(page))
+    .getByRole("button", { name: "Rename stream" })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Rename stream / Stream 1",
+    exact: true,
+  });
   await expect(dialog.getByLabel("Stream name")).toHaveValue("Stream 1");
   await expect(dialog.getByLabel("Stream name")).toHaveAttribute(
     "maxlength",
@@ -828,6 +1223,9 @@ test("rename preserves the default stream identity, credentials, and archive gua
   );
   await dialog.getByLabel("Stream name").fill("Main stage");
   await dialog.getByRole("button", { name: "Save name" }).click();
+  await expect(
+    page.getByRole("button", { name: "Signal Directory", exact: true }),
+  ).toBeFocused();
   await expect(page.locator(".preview-panel .panel-heading")).toContainText(
     "Main stage",
   );
@@ -839,7 +1237,10 @@ test("rename preserves the default stream identity, credentials, and archive gua
     "true",
   );
   await expect(
-    page.getByRole("button", { name: "Archive stream", exact: true }),
+    (await openDirectory(page)).getByRole("button", {
+      name: "Archive stream",
+      exact: true,
+    }),
   ).toBeDisabled();
   expect(backend.calls.find((call) => call.method === "PATCH")).toMatchObject({
     path: "/api/streams/stream",
@@ -877,8 +1278,11 @@ test("archive confirmation preserves histories, frees a slot, and disables live 
     recordings: [recording],
   });
   await page.goto("/");
-  await page.getByRole("button", { name: /^Studio B Offline/ }).click();
-  await page
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Offline/ })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await (await openDirectory(page))
     .getByRole("button", { name: "Archive stream", exact: true })
     .click();
   const dialog = page.getByRole("dialog", {
@@ -890,22 +1294,32 @@ test("archive confirmation preserves histories, frees a slot, and disables live 
   );
   await expect(dialog).toContainText("This cannot be undone");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Signal Directory", exact: true }),
+  ).toBeFocused();
   expect(backend.calls.filter((call) => call.method === "DELETE")).toHaveLength(
     0,
   );
-  await page
+  await (await openDirectory(page))
     .getByRole("button", { name: "Archive stream", exact: true })
     .click();
   await dialog
     .getByRole("button", { name: "Archive stream", exact: true })
     .click();
   await expect(
+    page.getByRole("button", { name: "Signal Directory", exact: true }),
+  ).toBeFocused();
+  await expect(
     page.getByText("Preserved history mode.", { exact: false }),
   ).toBeVisible();
-  await expect(page.getByText("1 / 4 active", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Archived history")).toHaveValue(
-    secondStream.id,
-  );
+  const directory = await openDirectory(page);
+  await expect(
+    directory.getByText("1 / 4 active", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    directory.getByRole("combobox", { name: "Archived history" }),
+  ).toHaveValue(secondStream.id);
+  await page.keyboard.press("Escape");
   await expect(
     page.getByRole("button", { name: "Start recording", exact: true }),
   ).toBeDisabled();
@@ -935,14 +1349,26 @@ test("archive confirmation preserves histories, frees a slot, and disables live 
   await expect(
     page.getByRole("button", { name: "Regenerate stream key", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "Rename stream" }).click();
-  await page.getByLabel("Stream name").fill("Former studio");
-  await page.getByRole("button", { name: "Save name" }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: "Rename stream" })
+    .click();
+  const rename = page.getByRole("dialog", {
+    name: "Rename stream / Studio B",
+    exact: true,
+  });
+  await rename.getByLabel("Stream name").fill("Former studio");
+  await rename.getByRole("button", { name: "Save name" }).click();
   await expect(page.locator(".selected-stream-name")).toContainText(
     "Former studio",
   );
-  await page.getByRole("button", { name: /^Stream 1 Offline/ }).click();
-  await page.getByLabel("Archived history").selectOption(secondStream.id);
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Stream 1 Offline/ })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await (await openDirectory(page))
+    .getByRole("combobox", { name: "Archived history" })
+    .selectOption(secondStream.id);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Face 1", exact: true }),
   ).toBeVisible();
@@ -982,8 +1408,11 @@ test("archive guards live, recording, unavailable media, and pending publisher s
     streams: [defaultStream, { ...secondStream, online: true }],
   });
   await page.goto("/");
-  await page.getByRole("button", { name: /^Studio B Online/ }).click();
-  const archive = page.getByRole("button", {
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Online/ })
+    .click();
+  const directory = await openDirectory(page);
+  const archive = directory.getByRole("button", {
     name: "Archive stream",
     exact: true,
   });
@@ -996,12 +1425,12 @@ test("archive guards live, recording, unavailable media, and pending publisher s
     secondStream.id,
   );
   await expect(
-    page.getByRole("button", { name: /^Studio B Offline.*Recording/ }),
+    directory.getByRole("button", { name: /^Studio B Offline.*Recording/ }),
   ).toBeVisible();
   await expect(archive).toBeDisabled();
   backend.status({ recording: null, media_available: false }, secondStream.id);
   await expect(
-    page.getByRole("button", { name: /^Studio B Media unavailable/ }),
+    directory.getByRole("button", { name: /^Studio B Media unavailable/ }),
   ).toBeVisible();
   await expect(archive).toBeDisabled();
   backend.status({ media_available: true }, secondStream.id);
@@ -1025,7 +1454,13 @@ test("archive guards live, recording, unavailable media, and pending publisher s
   await expect(page.getByRole("dialog").getByRole("alert")).toHaveText(
     "A pending publisher prevents archiving.",
   );
-  await expect(page.getByText("2 / 4 active", { exact: true })).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(
+    (await openDirectory(page)).getByText("2 / 4 active", { exact: true }),
+  ).toBeVisible();
 });
 
 test("scope switches clear revealed keys and recording state without stopping other streams", async ({
@@ -1052,7 +1487,9 @@ test("scope switches clear revealed keys and recording state without stopping ot
   await expect(
     page.getByLabel("Stream key SECRET", { exact: true }),
   ).toHaveAttribute("type", "text");
-  await page.getByRole("button", { name: /^Studio B Online/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Online/ })
+    .click();
   await expect(
     page.getByLabel("Stream key SECRET", { exact: true }),
   ).toHaveCount(0);
@@ -1076,9 +1513,13 @@ test("scope switches clear revealed keys and recording state without stopping ot
     page.getByRole("button", { name: "Stop recording", exact: true }),
   ).toBeEnabled();
   await expect(
-    page.getByRole("button", { name: /^Stream 1 Online.*Recording/ }),
+    (await openDirectory(page)).getByRole("button", {
+      name: /^Stream 1 Online.*Recording/,
+    }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /^Stream 1 Online/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Stream 1 Online/ })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Face 1", exact: true }),
   ).toBeVisible();
@@ -1169,7 +1610,9 @@ test("slow old status, settings, and mutation responses cannot populate a newly 
   await expect
     .poll(() => waiting.includes("/api/recordings/start"))
     .toBeTruthy();
-  await page.getByRole("button", { name: /^Studio B Offline/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Offline/ })
+    .click();
   await page.getByRole("tab", { name: "Settings" }).click();
   await expect(
     page.getByLabel("Stream key SECRET", { exact: true }),
@@ -1213,7 +1656,9 @@ test("switching streams changes the HLS manifest and disposes old reconnects", a
     ).length;
   await page.goto("/");
   await expect.poll(() => manifests("stream")).toBeGreaterThan(0);
-  await page.getByRole("button", { name: /^Studio B Online/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Online/ })
+    .click();
   await expect.poll(() => manifests(secondStream.id)).toBeGreaterThan(0);
   const before = manifests("stream");
   await page.waitForTimeout(5500);
@@ -1235,7 +1680,9 @@ test("native HLS and its authenticated error probe use the selected manifest URL
     streams: [defaultStream, { ...secondStream, online: true }],
   });
   await page.goto("/");
-  await page.getByRole("button", { name: /^Studio B Online/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Online/ })
+    .click();
   const manifest = `/api/streams/${secondStream.id}/live/index.m3u8`;
   await expect(page.locator(".live-player video")).toHaveAttribute(
     "src",
@@ -1246,7 +1693,9 @@ test("native HLS and its authenticated error probe use the selected manifest URL
   const before = count();
   await page.locator(".live-player video").dispatchEvent("error");
   await expect.poll(count).toBeGreaterThan(before);
-  await page.getByRole("button", { name: /^Stream 1 Offline/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Stream 1 Offline/ })
+    .click();
   await expect(page.locator(".live-player video")).not.toHaveAttribute("src");
 });
 
@@ -1273,8 +1722,9 @@ test("four-stream directory stays responsive with long names and polls serially"
     active--;
   });
   await page.goto("/");
-  await expect(page.getByRole("button", { name: /^C{64}/ })).toBeVisible();
-  await page.getByRole("button", { name: /^C{64}/ }).click();
+  const directory = await openDirectory(page);
+  await expect(directory.getByRole("button", { name: /^C{64}/ })).toBeVisible();
+  await directory.getByRole("button", { name: /^C{64}/ }).click();
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     expect(
@@ -1294,30 +1744,45 @@ const liveStreams: Stream[] = [
   { ...secondStream, id: `stream-${"c".repeat(32)}`, name: "Studio D" },
 ].map((stream) => ({ ...stream, online: true }));
 
-test("multi-view release gallery shows four independently recording feeds", async ({ page }) => {
+test("multi-view release gallery shows four independently recording feeds", async ({
+  page,
+}) => {
   const streams = liveStreams.map((stream, index) => ({
     ...stream,
     name: `Studio ${String.fromCharCode(65 + index)}`,
-    recording: { id: `gallery-recording-${index}`, started_at: "2026-09-14T12:00:00Z" },
+    recording: {
+      id: `gallery-recording-${index}`,
+      started_at: "2026-09-14T12:00:00Z",
+    },
   }));
   const backend = await server(page, { streams });
   for (const [index, stream] of streams.entries()) {
-    backend.status({
-      can_stop_recording: true,
-      session_id: `gallery-session-${index}`,
-      started_at: "2026-09-14T12:00:00Z",
-      tracks: ["H264", "MPEG-4 Audio"],
-      bitrate_mbps: 4 + index / 2,
-      bitrate_history: [3.9, 4.1, 4, 4.2, 4.1, 4.0].map((value) => value + index / 2),
-    }, stream.id);
+    backend.status(
+      {
+        can_stop_recording: true,
+        session_id: `gallery-session-${index}`,
+        started_at: "2026-09-14T12:00:00Z",
+        tracks: ["H264", "MPEG-4 Audio"],
+        bitrate_mbps: 4 + index / 2,
+        bitrate_history: [3.9, 4.1, 4, 4.2, 4.1, 4.0].map(
+          (value) => value + index / 2,
+        ),
+      },
+      stream.id,
+    );
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
   await page.getByRole("button", { name: "Multi-view", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Recording in progress" })).toHaveCount(4);
+  await expect(
+    page.getByRole("heading", { name: "Recording in progress" }),
+  ).toHaveCount(4);
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    const filename = width === 1440 ? "screenshot-multiview.png" : "screenshot-multiview-mobile.png";
+    const filename =
+      width === 1440
+        ? "screenshot-multiview.png"
+        : "screenshot-multiview-mobile.png";
     await page.screenshot({
       path: process.env.STEAMLAB_SCREENSHOT_DIR
         ? `${process.env.STEAMLAB_SCREENSHOT_DIR}/${filename}`
@@ -1376,7 +1841,9 @@ for (const count of [2, 3, 4]) {
     await expect(page.getByRole("main")).toHaveCount(1);
     await expect(
       page.getByRole("region", { name: "Stream management", exact: true }),
-    ).toHaveCount(1);
+    ).toHaveCount(0);
+    await expect(await openDirectory(page)).toHaveCount(1);
+    await page.keyboard.press("Escape");
     const positions = [];
     for (const stream of liveStreams.slice(0, count)) {
       const tile = page.getByRole("region", {
@@ -1427,7 +1894,9 @@ test("four tiles keep independent tabs, keyboard focus, credentials, analysis an
 }) => {
   const backend = await server(page, { streams: liveStreams });
   await page.goto("/");
-  await page.getByRole("button", { name: /^Studio B Online/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio B Online/ })
+    .click();
   const studioB = page.getByRole("region", {
     name: "Studio B workspace",
     exact: true,
@@ -1494,11 +1963,24 @@ test("four tiles keep independent tabs, keyboard focus, credentials, analysis an
   await expect(
     tiles[1].getByLabel("Stream key SECRET", { exact: true }),
   ).toHaveAttribute("type", "password");
-  await page.getByRole("button", { name: /^Studio D Online/ }).click();
+  await (await openDirectory(page))
+    .getByRole("button", { name: /^Studio D Online/ })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
-    page.getByText("Managing: Studio D.", { exact: false }),
+    (await openDirectory(page)).getByText("Managing: Studio D.", {
+      exact: false,
+    }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.locator(".stream-dashboard")).toHaveCount(4);
+  await expect(studioB.locator("video")).toHaveAttribute(
+    "data-retained",
+    "yes",
+  );
+  await expect(
+    tiles[2].getByLabel("Stream key SECRET", { exact: true }),
+  ).toHaveAttribute("type", "text");
   expect(backend.calls.filter((call) => call.method !== "GET")).toEqual([]);
 
   for (const [index, tile] of tiles.entries()) {
@@ -1570,7 +2052,9 @@ test("four dashboards have unique tab, select, credential, SVG and modal IDs", a
     page.getByLabel("Stream key SECRET", { exact: true }),
   ).toHaveCount(4);
   await uniqueIds(page);
-  await page
+  await openDirectory(page);
+  await uniqueIds(page);
+  await (await openDirectory(page))
     .getByRole("button", { name: "Rename stream", exact: true })
     .click();
   const rename = page.getByRole("dialog", {
@@ -1581,7 +2065,7 @@ test("four dashboards have unique tab, select, credential, SVG and modal IDs", a
   await uniqueIds(page);
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("button", { name: "Rename stream", exact: true }),
+    page.getByRole("button", { name: "Signal Directory", exact: true }),
   ).toBeFocused();
   for (const tab of await page.getByRole("tab", { name: "Recordings" }).all())
     await tab.click();
@@ -1628,9 +2112,10 @@ test("multi-view excludes offline and archived streams, caps at four and opens h
     await expect(
       page.getByRole("region", { name: `${name} workspace`, exact: true }),
     ).toHaveCount(0);
-  await page
-    .getByLabel("Archived history", { exact: true })
+  await (await openDirectory(page))
+    .getByRole("combobox", { name: "Archived history", exact: true })
     .selectOption("archived");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Single view", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -1703,6 +2188,31 @@ for (const engine of ["native", "HLS.js"]) {
     await players[0].evaluate((video) => {
       (video as HTMLVideoElement).dataset.retained = "yes";
     });
+    for (const close of ["Escape", "Close dialog"]) {
+      await openDirectory(page);
+      for (const player of players)
+        expect(await player.evaluate((video) => video.isConnected)).toBe(true);
+      if (close === "Escape") await page.keyboard.press("Escape");
+      else
+        await page
+          .getByRole("dialog", { name: "Signal Directory", exact: true })
+          .getByRole("button", { name: close, exact: true })
+          .click();
+      await expect(page.locator("dialog")).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Signal Directory", exact: true }),
+      ).toBeFocused();
+      await expect(page.locator(".live-player video")).toHaveCount(4);
+      for (const [index, player] of players.entries())
+        expect(
+          await player.evaluate(
+            (video, index) =>
+              video === document.querySelectorAll(".live-player video")[index],
+            index,
+          ),
+        ).toBe(true);
+    }
+    expect(backend.calls.filter((call) => call.method !== "GET")).toEqual([]);
     await page
       .getByRole("button", { name: "Single view", exact: true })
       .click();
@@ -1830,26 +2340,48 @@ test("recording state and server policy explain storage recovery, stop latches a
   ).toBeVisible();
 });
 
-test("single view can suppress automatic recording during a media server outage", async ({ page }) => {
+test("single view can suppress automatic recording during a media server outage", async ({
+  page,
+}) => {
   const backend = await server(page, { online: true });
   await page.goto("/");
-  const controls = page.getByRole("region", { name: "Stream 1 recording controls", exact: true });
+  const controls = page.getByRole("region", {
+    name: "Stream 1 recording controls",
+    exact: true,
+  });
   await expect(controls).toBeVisible();
-  backend.status({ online: false, media_available: false, recording: null,
-    recording_state: "waiting", can_stop_recording: false });
-  await expect(controls.getByRole("button", { name: "Start recording", exact: true })).toBeDisabled();
-  await expect(controls.getByRole("button", { name: "Stop recording", exact: true })).toHaveCount(0);
+  backend.status({
+    online: false,
+    media_available: false,
+    recording: null,
+    recording_state: "waiting",
+    can_stop_recording: false,
+  });
+  await expect(
+    controls.getByRole("button", { name: "Start recording", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    controls.getByRole("button", { name: "Stop recording", exact: true }),
+  ).toHaveCount(0);
   backend.status({ can_stop_recording: true });
   await expect(controls).toContainText("Stop keeps this publisher stopped");
-  const stop = controls.getByRole("button", { name: "Stop recording", exact: true });
+  const stop = controls.getByRole("button", {
+    name: "Stop recording",
+    exact: true,
+  });
   await expect(stop).toBeEnabled();
   await stop.click();
   await expect(controls).toContainText("Stopped for this connection");
   await expect(stop).toHaveCount(0);
   backend.status({ online: true, media_available: true });
-  await expect(controls.getByRole("button", { name: "Start recording", exact: true })).toBeEnabled();
-  expect(backend.calls.filter((call) => call.method === "POST").map((call) => call.path))
-    .toEqual(["/api/recordings/stop?stream_id=stream"]);
+  await expect(
+    controls.getByRole("button", { name: "Start recording", exact: true }),
+  ).toBeEnabled();
+  expect(
+    backend.calls
+      .filter((call) => call.method === "POST")
+      .map((call) => call.path),
+  ).toEqual(["/api/recordings/stop?stream_id=stream"]);
 });
 
 test("manual-only server policy is read-only and idempotent Start accepts an automatic race response", async ({
