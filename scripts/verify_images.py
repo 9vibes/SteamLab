@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -12,6 +13,8 @@ ACCEPT = ", ".join((
     "application/vnd.docker.distribution.manifest.list.v2+json",
     "application/vnd.docker.distribution.manifest.v2+json",
 ))
+RANGE_BYTES = 1024 * 1024
+RANGE_WORKERS = 16
 
 
 def verify(client, image, checked, pull):
@@ -47,11 +50,37 @@ def verify(client, image, checked, pull):
         response.raise_for_status()
         if pull and blob["digest"] not in checked:
             checksum, size = hashlib.sha256(), 0
-            with client.stream("GET", target, headers=headers) as response:
-                response.raise_for_status()
-                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                    checksum.update(chunk)
-                    size += len(chunk)
+            def read_range(start):
+                end = min(start + RANGE_BYTES, blob["size"]) - 1
+                for attempt in range(3):
+                    try:
+                        with client.stream("GET", target, headers={**headers, "Range": f"bytes={start}-{end}"}, timeout=30) as response:
+                            response.raise_for_status()
+                            if response.status_code == 206:
+                                if response.headers.get("content-range") != f"bytes {start}-{end}/{blob['size']}":
+                                    raise ValueError("Registry returned an unexpected byte range")
+                            elif response.status_code != 200 or start != 0 or blob["size"] > RANGE_BYTES:
+                                raise ValueError("Registry did not honor the bounded byte range")
+                            content = bytearray()
+                            for chunk in response.iter_bytes(chunk_size=RANGE_BYTES):
+                                content.extend(chunk)
+                                if len(content) > end - start + 1:
+                                    raise ValueError("Registry byte range exceeded expected size")
+                            if len(content) != end - start + 1:
+                                raise ValueError("Registry byte range was incomplete")
+                            return bytes(content)
+                    except httpx.HTTPError:
+                        if attempt == 2:
+                            raise
+
+            # Bounded waves avoid single-response proxy limits and keep memory
+            # bounded even when the first request is slower than its siblings.
+            with ThreadPoolExecutor(max_workers=RANGE_WORKERS) as pool:
+                while size < blob["size"]:
+                    starts = range(size, min(size + RANGE_BYTES * RANGE_WORKERS, blob["size"]), RANGE_BYTES)
+                    for content in pool.map(read_range, starts):
+                        checksum.update(content)
+                        size += len(content)
             if "sha256:" + checksum.hexdigest() != blob["digest"] or size != blob["size"]:
                 raise ValueError("Registry blob checksum or size mismatch")
             checked.add(blob["digest"])

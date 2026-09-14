@@ -125,3 +125,12 @@ native model parity on supported Python/glibc, test the CUDA image on the target
 GPU, and measure four-feed inference throughput on consented representative footage.
 The CUDA 12.4.1/cuDNN 9.1 pin and FFmpeg 4.4 compatibility logic remain unchanged;
 sampling FPS is not a guarantee of achieved per-stream analysis throughput.
+
+The [1.1.0 release workflow](https://github.com/9vibes/SteamLab/actions/runs/34789387734)
+subsequently passed on both Python 3.10 and 3.12, including native face-model tests
+and the 20 browser tests. All four image variants built and published successfully.
+Every layer of the web, backend, and CUDA worker release images was downloaded
+anonymously and SHA256-verified before updating the Umbrel package. The verifier
+uses small bounded parallel byte ranges to tolerate download response-size limits;
+five additional verifier tests passed locally. The release does not establish
+four-stream inference throughput or successful installation on a particular GPU host.

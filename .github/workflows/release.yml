@@ -38,7 +38,7 @@ jobs:
       - name: Backend and native face-model tests
         env:
           STEAMLAB_TEST_MODEL_DIR: /tmp/steamlab-models
-        run: python -m pytest backend worker/tests -q
+        run: python -m pytest backend worker/tests scripts/tests -q
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
