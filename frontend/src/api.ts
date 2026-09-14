@@ -1,4 +1,5 @@
 export interface Status {
+  can_stop_recording: boolean;
   stream_id: string;
   stream_name: string;
   archived: boolean;
@@ -10,6 +11,16 @@ export interface Status {
   bitrate_history: number[];
   tracks: string[];
   recording: { id: string; started_at: string } | null;
+  auto_record: boolean;
+  recording_state:
+    | "recording"
+    | "waiting"
+    | "stopped"
+    | "disk_paused"
+    | "error"
+    | "manual"
+    | "archived";
+  recording_error: string | null;
   disk_free_bytes: number;
   min_free_bytes: number;
   warning: string | null;
@@ -30,6 +41,7 @@ export interface Settings {
   rtmp_url: string;
   stream_key: string;
   analysis_enabled: boolean;
+  auto_record: boolean;
   match_threshold: number;
   detection_threshold: number;
   face_retention_days: number;

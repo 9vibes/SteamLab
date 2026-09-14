@@ -18,7 +18,7 @@ from backend.store import Store, utcnow
 
 @pytest.fixture
 def client(tmp_path):
-    config = Config(admin_password="a-long-test-password", internal_token="t" * 32, data_dir=tmp_path)
+    config = Config(admin_password="a-long-test-password", internal_token="t" * 32, data_dir=tmp_path, auto_record=False)
     app = create_app(config, monitoring=False)
     with TestClient(app) as client:
         yield client
@@ -274,7 +274,7 @@ def test_recording_lifecycle_disconnect_range_delete(client, monkeypatch):
     response = client.post("/api/recordings/start")
     assert response.status_code == 200
     key = response.json()["id"]
-    assert client.post("/api/recordings/start").status_code == 409
+    assert client.post("/api/recordings/start").json()["id"] == key
     assert client.delete(f"/api/recordings/{key}").status_code == 409
     assert client.get(f"/api/recordings/{key}/file").status_code == 409
     assert client.post("/api/recordings/stop").status_code == 204

@@ -296,6 +296,7 @@ p {
 }
 .stream-manager .input-help,
 .stream-name-field .input-help {
+  overflow-wrap: anywhere;
   margin-top: 10px;
   color: var(--muted);
   font-size: 11px;
@@ -698,10 +699,21 @@ p {
 }
 .recording-control {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 13px;
   padding: 18px;
   margin-top: 17px;
+}
+.recording-policy {
+  flex-basis: 100%;
+  font-size: 10px;
+  line-height: 1.8;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.recording-policy p + p {
+  margin-top: 6px;
 }
 .record-control-icon {
   width: 37px;
@@ -1936,7 +1948,7 @@ select {
     font-size: 29px;
   }
   .recording-control {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     padding: 18px;
   }
   .recording-control .button {
@@ -2297,6 +2309,164 @@ select {
     flex-direction: column;
     gap: 9px;
     font-size: 7px;
+  }
+}
+.view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.view-toolbar > div:first-child,
+.stream-dashboard {
+  min-width: 0;
+  max-width: 100%;
+}
+.view-toolbar h1 {
+  margin-top: 10px;
+  font-size: clamp(24px, 2.1vw, 35px);
+  font-weight: 600;
+  letter-spacing: -1.1px;
+}
+.view-toolbar p {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 8px;
+  line-height: 1.8;
+}
+.view-options {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.stream-dashboard .page-heading {
+  margin-bottom: 16px;
+}
+.multi-view {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 28px 24px;
+}
+.compact {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #141714;
+}
+.compact .console-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.tile-name {
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.compact .page-heading {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.compact .connection-pill {
+  margin: 0;
+  padding: 7px 9px;
+  font-size: 9px;
+}
+.compact .panel-heading {
+  height: auto;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+.compact .telemetry-grid {
+  gap: 10px;
+  margin-top: 10px;
+}
+.compact .bitrate-panel,
+.compact .disk-panel {
+  padding: 12px;
+}
+.compact .metric-value {
+  font-size: 23px;
+  margin: 8px 0;
+}
+.compact .bitrate-chart,
+.compact .chart-empty {
+  height: 25px;
+}
+.compact .disk-status {
+  margin-top: 8px;
+}
+.compact .recording-control {
+  padding: 12px;
+  margin-top: 10px;
+}
+.compact .session-strip,
+.compact .workflow-note {
+  display: none;
+}
+.compact .tab-panel {
+  padding: 16px;
+  min-height: 0;
+  max-height: 320px;
+  overflow: auto;
+}
+.compact .player-overlay {
+  padding: 12px;
+  gap: 6px;
+}
+.compact .player-symbol {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 2px;
+}
+.compact .player-symbol svg {
+  width: 20px;
+}
+.compact .player-overlay h2 {
+  font-size: 15px;
+}
+.compact .player-overlay p {
+  font-size: 9px;
+}
+.compact .player-overlay .eyebrow {
+  font-size: 7px;
+}
+.multi-empty {
+  text-align: center;
+}
+.multi-empty > .button {
+  margin-top: 16px;
+}
+.modal-header h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 800px) {
+  .multi-view {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .view-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+}
+@media (max-width: 480px) {
+  .compact {
+    padding: 9px;
+  }
+  .compact .tab-panel {
+    padding: 12px;
+  }
+  .compact .tabs button {
+    gap: 4px;
+    font-size: 10px;
+  }
+  .compact .player-symbol,
+  .compact .player-overlay .eyebrow {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

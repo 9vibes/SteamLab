@@ -509,7 +509,7 @@ def test_recorders_use_real_scoped_reader_paths_and_stop_independently(client, m
         assert len(listing) == 1 and listing[0]["id"] == recordings[key]
         assert listing[0]["stream_id"] == key and listing[0]["session_id"] == sessions[key]
         assert listing[0]["status"] == "recording"
-        assert client.post("/api/recordings/start", params={"stream_id": key}).status_code == 409
+        assert client.post("/api/recordings/start", params={"stream_id": key}).json()["id"] == recordings[key]
         assert client.delete(f"/api/recordings/{recordings[key]}").status_code == 409
         assert client.get(f"/api/recordings/{recordings[key]}/file").status_code == 409
     assert {item["id"]: item["recording"]["id"] for item in client.get("/api/streams").json()["items"]} == recordings
@@ -844,7 +844,7 @@ def test_archive_preserves_manageable_history_frees_slot_and_denies_ingest(clien
 
 
 def test_restart_rebuilds_active_streams_only_and_disables_every_analysis(tmp_path):
-    config = Config(admin_password="a-long-test-password", internal_token="t" * 32, data_dir=tmp_path)
+    config = Config(admin_password="a-long-test-password", internal_token="t" * 32, data_dir=tmp_path, auto_record=False)
     with TestClient(create_app(config, monitoring=False)) as first:
         login(first)
         ids = ["stream"] + [add_stream(first, f"Camera {index}") for index in range(1, 4)]

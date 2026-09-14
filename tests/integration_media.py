@@ -9,13 +9,14 @@ user-provided; this script does not download or install anything. Temporary
 credentials are never printed. Artifacts are kept under /tmp/opencode/
 steamlab-integration (override with INTEGRATION_ROOT). Exit 1 means a failed
 check; exit 2 means prerequisites or startup failed. Preserves the original 13
-checks and adds four-stream coverage. The suite has a 230-second deadline plus
+checks and adds four-stream coverage. The suite has a 270-second deadline plus
 bounded cleanup, suitable for a 300-second caller timeout. Native inference is
 not exercised; worker coverage uses real RTSP raw-frame capture only.
 """
 
 import json
 import hashlib
+from contextlib import closing
 import os
 from pathlib import Path
 import re
@@ -23,6 +24,7 @@ import secrets
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -258,6 +260,35 @@ def main():
         require(response.status_code == 200, f"start HTTP {response.status_code}: {response.text}")
         return response.json()["id"]
 
+    def automatic_recording(stream_id="stream"):
+        # Observe persisted intent and real bytes without a browser/API request
+        # that could accidentally trigger startup instead of the monitor.
+        database = (work / "data" / "steamlab.sqlite3").as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(database, uri=True)) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute("SELECT * FROM recordings WHERE stream_id=? AND status='recording'",
+                              (stream_id,)).fetchall()
+        require(len(rows) <= 1, f"duplicate active recordings: {stream_id}")
+        if rows:
+            target = work / "data" / "recordings" / f"{rows[0]['id']}.mp4"
+            if target.is_file() and target.stat().st_size > 1024:
+                return dict(rows[0])
+        return None
+
+    def disconnected(recording, stream_id="stream"):
+        current = status(stream_id)
+        if current["online"] or current["recording"] is not None:
+            return False
+        require(current["auto_record"] is True and current["recording_state"] == "waiting"
+                and current["recording_error"] is None, f"disconnect state incorrect: {current}")
+        item = recording_item(recording, stream_id)
+        require(item["status"] == "interrupted" and item["ended_at"],
+                f"disconnect did not finalize recording: {item}")
+        sessions = client.get("/api/sessions", params={"stream_id": stream_id}).json()["items"]
+        require(any(row["id"] == item["session_id"] and row["ended_at"] for row in sessions),
+                "disconnect did not end recording's session")
+        return True
+
     def validate_recording(key, expected, stream_id="stream", width=320):
         item = recording_item(key, stream_id)
         require(item["stream_id"] == stream_id, "recording ownership leaked")
@@ -302,10 +333,10 @@ def main():
                  "decoded": True, "stream_id": stream_id, "width": width, "id": key}
 
     def time_limit(signum, frame):
-        raise TimeoutError("230-second suite deadline exceeded")
+        raise TimeoutError("270-second suite deadline exceeded")
 
     previous_alarm = signal.signal(signal.SIGALRM, time_limit)
-    signal.alarm(230)
+    signal.alarm(270)
     try:
         for name, binary in binaries.items():
             version = subprocess.run([binary, "--version" if name == "MEDIAMTX" else "-version"],
@@ -346,6 +377,7 @@ def main():
             return "rotation succeeded; revoked key rejected"
         check("offline key rotation revokes previous key", key_rotation)
         publisher = publish(url)
+        initial_recording = wait_for(automatic_recording)
         wait_for(lambda: status()["online"])
         first_session = status()["session_id"]
 
@@ -428,38 +460,63 @@ def main():
             check(f"anonymous MediaMTX {protocol} denied", anonymous_read)
 
         def manual_recording():
-            recording = start_recording()
-            time.sleep(9)
+            recording = initial_recording["id"]
+            current = status()
+            require(settings["auto_record"] is True and current["auto_record"] is True
+                    and current["recording_state"] == "recording" and current["recording_error"] is None
+                    and current["recording"]["id"] == recording
+                    and initial_recording["session_id"] == first_session,
+                    "default stream did not automatically record before viewer requests")
+            before = {item["id"] for item in client.get("/api/recordings").json()["items"]}
+            require(before == {recording}, "automatic startup created extra recordings")
+            for _ in range(2):
+                require(start_recording() == recording, "Start replaced the active automatic recording")
             response = client.post("/api/recordings/stop")
             require(response.status_code == 204, f"stop HTTP {response.status_code}")
+            for _ in range(6):
+                time.sleep(1)
+                current = status()
+                require(publisher.poll() is None and current["online"]
+                        and current["session_id"] == first_session and current["recording"] is None
+                        and current["recording_state"] == "stopped" and current["recording_error"] is None,
+                        "manual Stop did not suppress the same publisher across monitor ticks")
+                require({item["id"] for item in client.get("/api/recordings").json()["items"]} == before,
+                        "idempotent Start or stopped monitor created an extra recording")
             return validate_recording(recording, "ready")
-        check("manual recording, ffprobe, decode, metadata and Range", manual_recording)
+        check("automatic recording, idempotent Start, sticky Stop, ffprobe decode metadata and Range", manual_recording)
 
         def interruption():
             recording = start_recording()
+            require(recording != initial_recording["id"] and status()["recording_state"] == "recording",
+                    "manual Start did not resume stopped publisher with a new file")
             time.sleep(9)
             require(status()["recording"] is not None,
                     f"recorder exited before disconnect: {recording_item(recording)}")
             stop(publisher)
-            wait_for(lambda: not status()["online"] and status()["recording"] is None)
+            wait_for(lambda: disconnected(recording))
             return validate_recording(recording, "interrupted")
         check("disconnect marks real recording interrupted", interruption)
         stop(publisher)
         wait_for(lambda: not status()["online"])
 
-        def no_resume():
+        def auto_resume():
             nonlocal publisher
-            count = len(client.get("/api/recordings").json()["items"])
+            before = {item["id"] for item in client.get("/api/recordings").json()["items"]}
             publisher = publish(url)
-            wait_for(lambda: status()["online"])
+            recording = wait_for(automatic_recording)
             for _ in range(6):
                 time.sleep(1)
-                require(status()["recording"] is None, "recording auto-resumed")
-            require(status()["session_id"] != first_session, "session did not change")
-            require(len(client.get("/api/recordings").json()["items"]) == count,
-                    "new recording created automatically")
-            return "new stream session; no active/new recording for 6 seconds"
-        check("reconnect does not auto-resume", no_resume)
+                current = status()
+                require(current["online"] and current["session_id"] != first_session
+                        and current["session_id"] == recording["session_id"]
+                        and current["recording"] and current["recording"]["id"] == recording["id"]
+                        and current["recording_state"] == "recording", "reconnect did not keep new recording active")
+            require(recording["id"] not in before
+                    and {item["id"] for item in client.get("/api/recordings").json()["items"]}
+                    == before | {recording["id"]}, "reconnect did not create exactly one new file")
+            return {"session": recording["session_id"], "recording": recording["id"],
+                    "automatic_before_status_or_viewer": True, "stable_seconds": 6}
+        check("reconnect automatically starts one new recording", auto_resume)
 
         feeds = {"stream": {"name": "Stream 1", "url": url, "key": key,
                             "width": 320, "publisher": publisher}}
@@ -477,6 +534,7 @@ def main():
                 response = client.get("/api/settings", params={"stream_id": stream_id})
                 response.raise_for_status()
                 scoped = response.json()
+                require(scoped["auto_record"] is True, "API-created stream lost automatic policy")
                 secret = parse_qs(urlsplit("rtmp://localhost/" + scoped["stream_key"]).query)["pass"][0]
                 private.append(secret)
                 require(scoped["rtmp_url"] == base and scoped["stream_key"].split("?")[0] == stream_id,
@@ -487,9 +545,17 @@ def main():
                 # Test a valid sibling credential on an offline path, not merely
                 # duplicate-publisher rejection on an already occupied path.
                 rejected(publish(feed_url.replace(secret, key), 320 + index * 32))
-                require(not status(stream_id)["online"], "sibling key admitted on new path")
+                path = anon.get(f"http://127.0.0.1:9997/v3/paths/get/live/{stream_id}")
+                require(path.status_code == 404 or (path.status_code == 200 and not path.json()["ready"]),
+                        "sibling key admitted on new path")
                 feeds[stream_id]["publisher"] = publish(feed_url, feeds[stream_id]["width"])
             require(len({feed["key"] for feed in feeds.values()}) == 4, "keys are not distinct")
+            for sid, feed in feeds.items():
+                automatic = wait_for(lambda sid=sid: automatic_recording(sid))
+                feed["recording"] = automatic["id"]
+                feed["session"] = automatic["session_id"]
+            require(len({feed["recording"] for feed in feeds.values()}) == 4,
+                    "four streams did not automatically create independent files")
             wait_for(lambda: all(status(sid)["online"] for sid in feeds))
             listing = client.get("/api/streams").json()
             require(listing["active_count"] == listing["max_streams"] == 4,
@@ -498,7 +564,9 @@ def main():
             require(all("stream_key" not in row for row in listing["items"]), "registry exposes keys")
             response = client.post("/api/streams", json={"name": "Rejected fifth feed"})
             require(response.status_code == 409, f"fifth stream HTTP {response.status_code}")
-            return "four named publishers on one RTMP base; three sibling keys denied; fifth HTTP 409"
+            return ("four named publishers auto-record before scoped Start or viewers; "
+                    "API-created monitors start before any scoped status request; "
+                    "three sibling keys denied; fifth HTTP 409")
         check("four publishers, scoped keys and capacity", four_publishers)
 
         def four_statuses():
@@ -508,7 +576,10 @@ def main():
             for row in current:
                 sid = row["stream_id"]
                 require(row["stream_name"] == feeds[sid]["name"] and row["media_available"]
-                        and row["session_id"] and row["tracks"] and not row["archived"],
+                        and row["session_id"] == feeds[sid]["session"] and row["tracks"] and not row["archived"]
+                        and row["auto_record"] is True and row["recording_state"] == "recording"
+                        and row["recording_error"] is None and not row["analysis"]["enabled"]
+                        and row["recording"] and row["recording"]["id"] == feeds[sid]["recording"],
                         "incomplete per-stream status")
                 require(feeds[sid]["publisher"].poll() is None, "publisher exited")
                 feeds[sid]["session"] = row["session_id"]
@@ -623,15 +694,18 @@ def main():
                         and current["session_id"] == feed["session"] and current["bitrate_mbps"] > 0,
                         f"sibling publisher/session disrupted: {sid}")
                 if recording:
-                    require(current["recording"] and current["recording"]["id"] == feed["recording"],
+                    require(current["recording_state"] == "recording" and current["recording"]
+                            and current["recording"]["id"] == feed["recording"],
                             f"sibling recording stopped: {sid}")
 
         isolated = list(feeds)[-1]
 
         def simultaneous_recordings():
             for sid, feed in feeds.items():
-                feed["recording"] = start_recording(sid)
-            time.sleep(9)
+                before = {item["id"] for item in client.get("/api/recordings", params={"stream_id": sid}).json()["items"]}
+                require(start_recording(sid) == feed["recording"], "scoped Start replaced automatic recording")
+                require({item["id"] for item in client.get("/api/recordings", params={"stream_id": sid}).json()["items"]}
+                        == before, "scoped Start duplicated automatic recording")
             for sid, feed in feeds.items():
                 require(status(sid)["recording"]["id"] == feed["recording"],
                         "not all four recordings remained active")
@@ -640,17 +714,36 @@ def main():
                         and item["session_id"] == feed["session"], "recorder missing bytes/session")
             response = client.post("/api/recordings/stop", params={"stream_id": isolated})
             require(response.status_code == 204, f"isolated stop HTTP {response.status_code}")
-            survivors(recording=True)
             feed = feeds[isolated]
+            before = {item["id"] for item in client.get("/api/recordings", params={"stream_id": isolated}).json()["items"]}
+            for _ in range(6):
+                time.sleep(1)
+                current = status(isolated)
+                require(feed["publisher"].poll() is None and current["online"]
+                        and current["session_id"] == feed["session"] and current["recording"] is None
+                        and current["recording_state"] == "stopped", "isolated Stop did not stay stopped")
+                require({item["id"] for item in client.get("/api/recordings", params={"stream_id": isolated}).json()["items"]}
+                        == before, "isolated stopped feed created another file")
+                survivors(recording=True)
             evidence = validate_recording(feed["recording"], "ready", isolated, feed["width"])
-            feed["interrupted_recording"] = start_recording(isolated)
-            time.sleep(9)
             stop(feed["publisher"])
             wait_for(lambda: not status(isolated)["online"] and status(isolated)["recording"] is None)
+            feed["publisher"] = publish(feed["url"], feed["width"])
+            automatic = wait_for(lambda: automatic_recording(isolated))
+            require(automatic["id"] not in before and automatic["session_id"] != feed["session"],
+                    "new publisher did not clear manual Stop suppression")
+            feed["interrupted_recording"] = automatic["id"]
+            feed["session"] = automatic["session_id"]
+            time.sleep(9)
+            require(status(isolated)["recording"]["id"] == feed["interrupted_recording"],
+                    "reconnected automatic recorder exited before disconnect")
+            stop(feed["publisher"])
+            wait_for(lambda: disconnected(feed["interrupted_recording"], isolated))
             survivors(recording=True)
             interrupted = validate_recording(feed["interrupted_recording"], "interrupted", isolated, feed["width"])
-            return {"manual": evidence, "disconnect": interrupted, "other_recorders_active": 3}
-        check("four simultaneous recorders and isolated stop disconnect", simultaneous_recordings)
+            return {"automatic_then_manual_stop": evidence, "automatic_reconnect_disconnect": interrupted,
+                    "other_recorders_active": 3, "stopped_seconds": 6}
+        check("four automatic recorders and isolated sticky Stop reconnect disconnect", simultaneous_recordings)
 
         def rotated_offline():
             feed = feeds[isolated]
@@ -666,13 +759,24 @@ def main():
             rejected(publish(old_url, feed["width"]))
             survivors(recording=True)
             feed["publisher"] = publish(feed["url"], feed["width"])
-            wait_for(lambda: status(isolated)["online"])
-            require(status(isolated)["session_id"] != feed["session"]
-                    and status(isolated)["recording"] is None, "rotated reconnect reused session/recording")
+            automatic = wait_for(lambda: automatic_recording(isolated))
+            require(automatic["session_id"] != feed["session"]
+                    and automatic["id"] not in (feed["recording"], feed["interrupted_recording"]),
+                    "rotated reconnect reused session/recording")
+            feed["rotated_recording"] = automatic["id"]
+            feed["session"] = automatic["session_id"]
+            require(status(isolated)["recording"]["id"] == automatic["id"]
+                    and status(isolated)["recording_state"] == "recording", "new key did not auto-record")
+            require(client.delete(f"/api/streams/{isolated}").status_code == 409,
+                    "archive accepted live automatic recording")
+            time.sleep(9)
             survivors(recording=True)
             stop(feed["publisher"])
-            wait_for(lambda: not status(isolated)["online"])
-            return "revoked key rejected; new key publishes; other three sessions and recorders unchanged"
+            wait_for(lambda: disconnected(feed["rotated_recording"], isolated))
+            survivors(recording=True)
+            return {"revoked_key_rejected": True, "other_recorders_active": 3,
+                    "new_key_automatic_recording": validate_recording(
+                        feed["rotated_recording"], "interrupted", isolated, feed["width"])}
         check("offline scoped rotation leaves three publishers recording", rotated_offline)
 
         def recording_isolation():
@@ -695,16 +799,20 @@ def main():
         def archive_history():
             feed = feeds[isolated]
             params = {"stream_id": isolated}
+            wait_for(lambda: disconnected(feed["rotated_recording"], isolated))
             histories = {kind: client.get(f"/api/{kind}", params=params).json()
                          for kind in ("sessions", "recordings", "faces")}
             require(histories["sessions"]["items"] and histories["recordings"]["items"],
                     "archive test needs existing history")
+            require(all(item["ended_at"] and item["status"] in ("ready", "interrupted")
+                        for item in histories["recordings"]["items"]), "archive attempted before finalization")
             response = client.delete(f"/api/streams/{isolated}")
             require(response.status_code == 204, f"offline archive HTTP {response.status_code}")
             for kind, history in histories.items():
                 require(client.get(f"/api/{kind}", params=params).json() == history,
                         f"archive changed {kind} history")
-            require(status(isolated)["archived"] and not status(isolated)["online"],
+            require(status(isolated)["archived"] and not status(isolated)["online"]
+                    and status(isolated)["recording"] is None and status(isolated)["recording_state"] == "archived",
                     "archived status incorrect")
             require(client.get("/api/settings", params=params).json()["stream_key"] == "",
                     "archived key still exposed")
@@ -751,7 +859,7 @@ def main():
             logs[process].close()
         (work / "results.json").write_text(redact(json.dumps(results, indent=2)))
         (work / "runtime.json").write_text(json.dumps({"seconds": round(time.monotonic() - started, 3),
-            "suite_deadline_seconds": 230, "native_inference_tested": False, "shutdowns": shutdowns}, indent=2))
+            "suite_deadline_seconds": 270, "native_inference_tested": False, "shutdowns": shutdowns}, indent=2))
         print(f"RUNTIME: {time.monotonic() - started:.1f}s including cleanup; artifacts: {work}", flush=True)
         client.close()
         anon.close()

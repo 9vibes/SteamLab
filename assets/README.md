@@ -9,3 +9,10 @@ To regenerate from `frontend/`, with Chromium installed:
 ```sh
 STEAMLAB_SCREENSHOT_DIR=../assets npm test -- --grep 'desktop and mobile'
 ```
+
+The 1.2.0 multi-view gallery uses four named synthetic feed fixtures and simulated
+recording/bitrate state. It contains no personal footage or real publishing keys.
+
+```sh
+STEAMLAB_SCREENSHOT_DIR=../assets npm test -- --grep 'multi-view release gallery'
+```

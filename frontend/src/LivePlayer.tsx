@@ -7,12 +7,14 @@ export default function LivePlayer({
   available,
   session,
   manifestUrl,
+  streamName,
   onUnauthorized,
 }: {
   online: boolean;
   available: boolean;
   session: string | null;
   manifestUrl: string;
+  streamName: string;
   onUnauthorized: () => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -150,7 +152,7 @@ export default function LivePlayer({
         muted
         playsInline
         controls={online && available}
-        aria-label="Live stream preview"
+        aria-label={`${streamName} live stream preview`}
       />
       {(waiting || state !== "playing") && (
         <div

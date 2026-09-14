@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 
 const paths = {
@@ -54,7 +54,10 @@ export function Brand() {
     <div className="brand">
       <span className="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 40 40">
-          <path d="M10 10h5v8l9-8h7L20 20l11 10h-7l-9-8v8h-5z" fill="currentColor" />
+          <path
+            d="M10 10h5v8l9-8h7L20 20l11 10h-7l-9-8v8h-5z"
+            fill="currentColor"
+          />
         </svg>
       </span>
       <span>
@@ -97,6 +100,7 @@ export function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
@@ -111,7 +115,7 @@ export function Modal({
     <dialog
       ref={ref}
       className={`modal ${wide ? "modal-wide" : ""}`}
-      aria-labelledby="modal-title"
+      aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault();
         onClose();
@@ -130,7 +134,7 @@ export function Modal({
       }}
     >
       <div className="modal-header">
-        <h2 id="modal-title">{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <button
           className="icon-button"
           aria-label="Close dialog"

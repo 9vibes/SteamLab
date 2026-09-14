@@ -12,6 +12,7 @@ class Config:
     data_dir: Path = Path("/data")
     rtmp_port: int = 1935
     cookie_secure: bool = False
+    auto_record: bool = True
     min_free_gb: float = 2
     face_retention_days: int = 7
     max_faces: int = 2000
@@ -23,6 +24,8 @@ class Config:
     rtsp_url: str = "rtsp://mediamtx:8554/live/stream"
 
     def __post_init__(self):
+        if not isinstance(self.auto_record, bool):
+            raise ValueError("AUTO_RECORD must be true or false")
         if len(self.admin_password) < 16 or len(self.internal_token) < 32:
             raise ValueError("ADMIN_PASSWORD needs 16+ characters; INTERNAL_TOKEN needs 32+")
         if any(c in self.internal_token for c in "\r\n"):
@@ -42,6 +45,9 @@ class Config:
 
     @classmethod
     def from_env(cls):
+        auto_record = os.environ.get("AUTO_RECORD", "true").strip().lower()
+        if auto_record not in ("true", "false"):
+            raise ValueError("AUTO_RECORD must be true or false")
         return cls(
             admin_password=os.environ.get("ADMIN_PASSWORD", ""),
             internal_token=os.environ.get("INTERNAL_TOKEN", ""),
@@ -49,6 +55,7 @@ class Config:
             data_dir=Path(os.environ.get("DATA_DIR", "/data")),
             rtmp_port=int(os.environ.get("RTMP_PORT", "1935")),
             cookie_secure=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
+            auto_record=auto_record == "true",
             min_free_gb=float(os.environ.get("MIN_FREE_GB", "2")),
             face_retention_days=int(os.environ.get("FACE_RETENTION_DAYS", "7")),
             max_faces=int(os.environ.get("MAX_FACES", "2000")),

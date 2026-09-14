@@ -61,7 +61,7 @@ fi
         printf '%s\n' \
             'RTMP_PORT=1935' 'WEB_PORT=8080' \
             'WEB_BIND=127.0.0.1' 'RTMP_BIND=127.0.0.1' \
-            'COOKIE_SECURE=false' 'MIN_FREE_GB=2' 'FACE_RETENTION_DAYS=7' \
+            'COOKIE_SECURE=false' 'AUTO_RECORD=true' 'MIN_FREE_GB=2' 'FACE_RETENTION_DAYS=7' \
             'MAX_FACES=2000' 'MATCH_THRESHOLD=0.5' \
             'DETECTION_THRESHOLD=0.85' 'ANALYSIS_FPS=2'
     } > "$root/.env"

@@ -4,10 +4,15 @@ All timestamps are UTC ISO 8601. Browser API uses same-origin HttpOnly session c
 POST/PATCH/DELETE requests (except login) require `X-CSRF-Token` from GET `/api/auth/me` or login.
 Errors are JSON `{ "detail": "message" }`. Browser resources are private. No mock data.
 
-Multistream additions below require **version 1.1.0**. Deploy matching backend,
+The multistream API was introduced in **1.1.0** and is retained in **1.2.0**. Deploy matching backend,
 frontend, worker, and MediaMTX configuration
 atomically. [MULTISTREAM.md](MULTISTREAM.md) is the implementation contract;
 [VERIFICATION.md](VERIFICATION.md) records checks and remaining hardware validation.
+
+**1.2.0 additions:** the automatic recording fields and Start behavior
+documented below follow [MULTIVIEW.md](MULTIVIEW.md). No routes, scoping,
+authentication, or existing recording metadata shapes change; status/settings gain
+fields and Start becomes idempotent (200 rather than 409 when already recording).
 
 ## Stream registry
 
@@ -55,11 +60,12 @@ Authentication and logout routes are unchanged.
 - POST `/api/auth/logout` -> 204.
 - GET `/api/status` -> `{online, media_available, session_id, started_at, bitrate_mbps,
   bitrate_history: number[], tracks: string[], recording: {id, started_at} | null,
+  auto_record: boolean, recording_state, recording_error: string | null, can_stop_recording: boolean,
   disk_free_bytes, min_free_bytes, warning: string | null,
   analysis: {enabled, state, provider, error, last_seen}, face_count,
   stream_id, stream_name, archived}`.
 - GET `/api/settings` -> `{rtmp_url, stream_key, analysis_enabled, match_threshold,
-  detection_threshold, face_retention_days, max_faces, analysis_fps,
+  detection_threshold, face_retention_days, max_faces, analysis_fps, auto_record: boolean,
   stream_id, stream_name, archived}`. Archived `stream_key` is empty.
 - POST `/api/stream/key` -> settings; rejects while live, with a pending publisher,
   media unavailable, or archived.
@@ -72,7 +78,11 @@ Authentication and logout routes are unchanged.
 - DELETE `/api/faces/{id}` -> 204.
 - DELETE `/api/faces` -> 204 (clears thumbnails, embeddings, and sightings).
 - GET `/api/sessions` -> `{items: [{id, started_at, ended_at}]}` (latest 100).
-- POST `/api/recordings/start` -> `{id, started_at}` (409 offline/already recording).
+- POST `/api/recordings/start` -> `{id, started_at}` (200). Returns the existing
+  active recording if already running; otherwise explicitly retries/resumes,
+  overriding manual Stop or a latched failure. Guards still reject offline/media
+  unavailable, archived, low-disk, or non-H.264 feeds with 409; FFmpeg spawn failure
+  returns 503.
 - POST `/api/recordings/stop` -> 204 (idempotent).
 - GET `/api/recordings` -> `{items: [{id, started_at, ended_at, status,
   size_bytes, duration_seconds, download_url, playback_url, error}]}`.
@@ -84,6 +94,66 @@ Authentication and logout routes are unchanged.
   playlist: relative variant playlists and segments must retain the stream directory.
 - GET `/api/live/{file}` -> default-stream HLS alias, including `/api/live/index.m3u8`.
 - GET `/health` -> unauthenticated backend liveness only; blocked by nginx, not a browser route.
+
+## Automatic recording (1.2.0)
+
+`auto_record` in both status and settings is the read-only backend policy from
+`AUTO_RECORD` (default `true`; set `false` in deployment configuration for manual-only
+recording). It is not writable through the settings API. Status `recording_state`
+is one of the following, separate from a saved recording's `status`:
+
+| Value | Meaning |
+| --- | --- |
+| `recording` | A recorder is active, automatic or manually started |
+| `waiting` | Automatic mode is waiting for a confirmed ready feed/start |
+| `stopped` | Explicit Stop suppresses recording for the current/last publisher fingerprint |
+| `disk_paused` | An online automatic-mode feed is waiting for stable disk recovery |
+| `error` | A recorder failure is latched for the current/last publisher fingerprint |
+| `manual` | Automatic recording is disabled and no higher-priority state applies |
+| `archived` | The archived stream cannot record |
+
+**Upgrade warning:** With the default `AUTO_RECORD=true`, already-live feeds
+automatically record after an update or backend restart, **even if recording was
+previously stopped manually**. To retain manual-only operation, stop encoders
+before updating, configure the operator setting `AUTO_RECORD=false`, and apply it
+before reconnecting. A browser Stop is not a persistent policy setting.
+
+State precedence is archived, active recording, manual Stop, latched failure,
+manual-only policy, then automatic waiting/disk pause. An offline automatic feed
+reports `waiting` unless Stop or failure is latched. `recording_error` is a sanitized
+string or `null`; archived status reports `null`. Existing `recording` remains
+`{id, started_at} | null`.
+
+`can_stop_recording` reports whether Stop can halt an active recording or suppress
+the remembered publisher. It remains true during a media API outage when that
+publisher can be suppressed, and is false before any publisher has been observed,
+after explicit Stop, or for an archived stream. Single view exposes Stop during
+such outages without requiring media-server availability.
+
+Each backend monitor starts recording once its configured feed is confirmed ready,
+including existing live feeds after backend startup/restart. No browser action or
+open dashboard is required. Automatic Start uses the same H.264, disk, and reader
+authentication guards as explicit Start. Disconnect finalizes the old file;
+a genuinely different publisher connection starts a new one unless
+`AUTO_RECORD=false`, which requires explicit Start.
+
+Idempotent Stop (204) latches the publisher fingerprint (source ID and ready time),
+including while disk-paused with no active recorder. Temporary MediaMTX API outages
+do not clear Stop or failure suppression for the same connection. Reconnect with a
+different fingerprint clears those latches; explicit Start overrides them and retries
+subject to the usual guards. The latches are backend-process state, not a persisted
+opt-out across restarts.
+
+Low disk stops recording. Automatic recovery requires free space above the shared
+reserve plus headroom for five continuous seconds, even after publisher reconnects;
+headroom is 10% of the reserve,
+bounded to 16-256 MiB. Manual Stop takes priority over recovery. Spawn failures or
+unexpected recorder exits latch an error for that connection: no repeated automatic
+attempts or file churn until explicit Start or a genuine reconnect.
+
+Multi-view is presentation only: changing views/tabs does not POST recording or
+analysis actions. Face analysis remains opt-in and disabled after backend restart;
+default-on video recording never enables face analysis or identity recognition.
 
 ## Internal worker endpoints
 
@@ -139,7 +209,7 @@ HLS base `http://mediamtx:8888/live/{id}`. Both media protocols remain private.
 Backend data volume mounted `/data`; SQLite `/data/steamlab.sqlite3`, recordings `/data/recordings`.
 Backend env: ADMIN_PASSWORD (>=16 chars), INTERNAL_TOKEN (>=32 chars), PUBLIC_HOST,
 RTMP_PORT=1935, COOKIE_SECURE=false (true behind HTTPS), DATA_DIR=/data,
-MIN_FREE_GB=2, FACE_RETENTION_DAYS=7, MAX_FACES=2000, MATCH_THRESHOLD=0.5,
+AUTO_RECORD=true, MIN_FREE_GB=2, FACE_RETENTION_DAYS=7, MAX_FACES=2000, MATCH_THRESHOLD=0.5,
 DETECTION_THRESHOLD=0.85, ANALYSIS_FPS=2.
 Worker env: BACKEND_URL=http://backend:8000, INTERNAL_TOKEN, MODEL_DIR=/models,
 INFERENCE_DEVICE=cpu|cuda. CUDA requested must not silently fall back.
@@ -147,10 +217,15 @@ Run one backend process only; recording and monitoring are owned by that process
 `MAX_FACES` is the shared application-wide total, including archived face groups,
 not a per-stream cap. `MIN_FREE_GB` is one shared reserve: low disk stops recording,
 pauses analysis, and rejects observations across feeds. Analysis resets to disabled
-per feed on restart; recordings never automatically resume or get deleted.
+per feed on restart; automatic video recovery follows the policy above. Recordings
+are never automatically deleted. Four concurrent feeds grow storage at their
+combined recording rate; the reserve is neither a quota nor a per-feed allocation.
+Monitor capacity and manage separate storage/quotas and video retention explicitly.
 
-Migration creates the `streams` registry and adds `stream_id` ownership to sessions,
+The 1.1.0 migration creates the `streams` registry and adds `stream_id` ownership to sessions,
 faces, and recordings, backfilling legacy rows to `stream`. Existing row IDs, files,
 and the publishing key are preserved; files are not moved or overwritten. Default
 settings retain original keys; additional settings use `stream:{id}:{key}`. Keep
 the existing data volume, Compose/app ID, cookie, and GPU image requirements.
+Version 1.2.0 retains this schema and introduces no new database format or API
+migration beyond the existing 1.1.0 migration.

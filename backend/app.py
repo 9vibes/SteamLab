@@ -242,7 +242,7 @@ def create_app(config=None, *, monitoring=True):
                 "analysis_enabled": store.get("analysis_enabled", stream_id) == "1",
                 "match_threshold": cfg.match_threshold, "detection_threshold": cfg.detection_threshold,
                 "face_retention_days": cfg.face_retention_days, "max_faces": cfg.max_faces,
-                "analysis_fps": cfg.analysis_fps}
+                "analysis_fps": cfg.analysis_fps, "auto_record": cfg.auto_record}
 
     @app.get("/health")
     async def health():
@@ -383,6 +383,8 @@ def create_app(config=None, *, monitoring=True):
             return {"stream_id": stream_id, "stream_name": row["name"], "archived": True,
                     "online": False, "media_available": False, "session_id": None, "started_at": None,
                     "bitrate_mbps": 0, "bitrate_history": [], "tracks": [], "recording": None,
+                    "auto_record": app.state.config.auto_record, "recording_state": "archived", "recording_error": None,
+                    "can_stop_recording": False,
                     "disk_free_bytes": disk.disk_free(), "min_free_bytes": disk.min_free_bytes,
                     "warning": None, "analysis": {"enabled": False, "state": "archived", "provider": None,
                                                    "error": None, "last_seen": None},
@@ -400,6 +402,9 @@ def create_app(config=None, *, monitoring=True):
                 "session_id": media.session_id, "started_at": media.started_at,
                 "bitrate_mbps": media.bitrate, "bitrate_history": list(media.meter.history),
                 "tracks": media.tracks, "recording": media.recording,
+                "auto_record": app.state.config.auto_record, "recording_state": media.recording_state,
+                "recording_error": media.recording_error,
+                "can_stop_recording": media.can_stop_recording,
                 "disk_free_bytes": media.disk_free(), "min_free_bytes": media.min_free_bytes,
                 "warning": media.warning, "analysis": {**heartbeat, "enabled": enabled},
                 "face_count": store.db.execute("SELECT COUNT(*) FROM faces WHERE stream_id=?", (stream_id,)).fetchone()[0]}

@@ -35,6 +35,7 @@ services:
       PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST to the OBS-reachable hostname or IPv4 address}
       RTMP_PORT: ${RTMP_PORT:-1935}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      AUTO_RECORD: ${AUTO_RECORD:-true}
       DATA_DIR: /data
       MIN_FREE_GB: ${MIN_FREE_GB:-2}
       FACE_RETENTION_DAYS: ${FACE_RETENTION_DAYS:-7}

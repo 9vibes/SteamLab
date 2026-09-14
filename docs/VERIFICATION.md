@@ -1,9 +1,14 @@
 # Verification
 
-Implementation checks performed on September 13, 2026. This is not a claim of
+Implementation checks performed on September 13-14, 2026. This is not a claim of
 production deployment or measured face-recognition accuracy.
 
-## Automated checks
+The 1.0.0/1.1.0 results below are historical and retain their original counts and
+behavioral observations. Local checks for 1.2.0 Multi-view and automatic recording
+are recorded separately below. Release CI will run; no 1.2.0 CI, image publication,
+or anonymous image-verification result is claimed here.
+
+## Historical automated checks (1.0.0)
 
 | Check | Result |
 | --- | --- |
@@ -40,7 +45,9 @@ that third-party playback engine.
 - No local Docker daemon or target NVIDIA driver/device was available. Image builds
   and browser tests are release-workflow gates; GPU execution is a host-only check.
 
-## Real media integration
+## Historical real media integration (1.0.0)
+
+Historical 1.0.0 manual-recording behavior, not the 1.2.0 default-on policy:
 
 `tests/integration_media.py` passed all 13 checks with native MediaMTX 1.12.3 and
 FFmpeg/FFprobe 7.0.2-static:
@@ -66,12 +73,15 @@ graceful stdin quit, with a bounded forced-shutdown fallback.
 
 ## Still required on the server
 
-- Run the published Docker images on the server. Docker builds passed on GitHub
-  Actions, but a full Umbrel installation and runtime test has not been performed.
+- Run the matching 1.2.0 Docker images on the server after publication. Historical
+  1.0.0/1.1.0 Docker builds passed on GitHub Actions; this is not a 1.2.0 build result.
+  A full Umbrel installation and runtime test has not been performed.
 - Test YuNet detection and recurring-face grouping on consented, representative
-  footage; CPU model parity is now covered by the publication workflow.
+  footage; CPU model parity passed in historical release workflows and will run
+  again in the 1.2.0 workflow.
 - Verify `CUDAExecutionProvider` on the target NVIDIA GPU. CUDA image tag existence
-  was checked, but neither GPU inference nor target-driver compatibility was tested.
+  was checked for historical releases, not verified here for 1.2.0; neither GPU
+  inference nor target-driver compatibility was tested.
 - Test OBS, HTTPS secure cookies, private network bindings, and storage permissions.
 - Test browser playback on the devices you will use, especially Safari's native HLS.
 - Tune confidence, blur/size filters, and cosine threshold. Similarity is not a
@@ -81,7 +91,7 @@ The default sampling resolution is 640x360 at 2 FPS, so small, distant, blurred,
 occluded, or briefly visible faces may not enter the catalog. All settings and
 deployment precautions are documented in the root README.
 
-## Multistream verification (1.1.0)
+## Historical multistream verification (1.1.0)
 
 Checks against [MULTISTREAM.md](MULTISTREAM.md) on September 13, 2026:
 
@@ -118,11 +128,12 @@ not run face inference on real people. Artifacts from the final run are at
 Desktop/mobile screenshots were regenerated and inspected. Browser tests use
 synthetic API fixtures, including slow-response switching and archive management.
 
-These are the local pre-release checks for 1.1.0, not a target-host deployment test. Build the matching
-backend, frontend, and worker images (worker now also requires curl), and deploy
-the matching MediaMTX configuration/template together. Before publication, rerun
-native model parity on supported Python/glibc, test the CUDA image on the target
-GPU, and measure four-feed inference throughput on consented representative footage.
+These were the local pre-release checks for 1.1.0, not a target-host deployment test.
+The release required matching backend, frontend, and worker images (including curl)
+and MediaMTX configuration/template. Native model parity was subsequently rerun
+on supported Python/glibc as recorded below. Testing the CUDA image on the target
+GPU and measuring four-feed inference throughput on consented representative footage
+remain host checks.
 The CUDA 12.4.1/cuDNN 9.1 pin and FFmpeg 4.4 compatibility logic remain unchanged;
 sampling FPS is not a guarantee of achieved per-stream analysis throughput.
 
@@ -134,3 +145,52 @@ anonymously and SHA256-verified before updating the Umbrel package. The verifier
 uses small bounded parallel byte ranges to tolerate download response-size limits;
 five additional verifier tests passed locally. The release does not establish
 four-stream inference throughput or successful installation on a particular GPU host.
+
+## Multi-view and automatic recording (1.2.0)
+
+The authoritative contract is [MULTIVIEW.md](MULTIVIEW.md). The following local
+verification completed on September 14, 2026. These are source-level and native-media
+results, not 1.2.0 release CI, Docker image, registry, or installed Umbrel results.
+
+| Check | Result |
+| --- | --- |
+| Backend, worker, and registry-verifier tests | 291 passed |
+| Native face-model test module | Skipped locally; compatible dependencies unavailable |
+| Chromium browser tests | 34 passed |
+| TypeScript/Vite production build | Passed |
+| Real-media automatic-recording integration | 21 of 21 checks passed |
+| Standalone GPU and Umbrel Compose configuration | Passed |
+
+The backend suite includes 51 automatic-recording tests: default-on and manual-only
+configuration, viewer-independent startup, restart and reconnect, concurrent
+idempotent Start, per-publisher Stop/failure latches, sanitized errors, and database
+failure before spawning FFmpeg. Disk tests cover bounded headroom, five continuous
+recovery seconds, flapping publishers, manual Stop during storage pause, and Stop
+during a media API outage. Reconnects cannot bypass storage recovery requirements.
+
+Browser tests cover two, three, and four connected feeds; a synthetic release gallery; independent tabs/actions;
+unique form, tab, SVG, and dialog IDs; per-feed mute and player cleanup; mode switching
+without server mutations; empty and archived states; and Stop during a media outage.
+Desktop and mobile screenshots were generated and inspected. Multi-view tool panels
+scroll independently below their own video. Browser fixtures are synthetic and do
+not demonstrate real face-recognition accuracy.
+
+The final real-media run used MediaMTX 1.12.3 and FFmpeg/FFprobe 7.0.2-static. It
+verified automatic recordings through database rows and actual MP4 bytes before
+any viewer or Start request, four concurrent recorders, six-second manual Stop
+suppression, automatic new files on reconnect and rotated-key publishing, HLS,
+decodable recordings and byte ranges, archive/history preservation, and unchanged
+sibling recording sessions. All 21 checks passed in 117.2 seconds including cleanup.
+Artifacts are at `/tmp/opencode/steamlab-integration/run-4usb69ca/` in this workspace.
+
+The 1.2.0 release CI will run, including native model parity and matching Docker
+image builds. Anonymous image verification, installed Umbrel behavior, target GPU
+inference, and four-feed throughput remain release/host checks. Face analysis is
+still opt-in. Historical release successes above do not verify 1.2.0 artifacts.
+
+**Upgrade warning:** `AUTO_RECORD` defaults to `true` in 1.2.0 and records already-live
+feeds after an update or backend restart, **even if previously stopped manually**.
+For manual-only operation, stop encoders before updating, configure and apply the
+operator setting `AUTO_RECORD=false`, then reconnect encoders. Stop survives a
+temporary media API outage, not a backend process restart. Recordings are never
+automatically deleted, and four feeds can substantially increase storage usage.

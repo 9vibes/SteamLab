@@ -12,6 +12,8 @@ from fastapi import HTTPException
 
 from .store import utcnow
 
+DISK_RECOVERY_SECONDS = 5
+
 
 class Bitrate:
     def __init__(self):
@@ -49,6 +51,12 @@ class Media:
         self.recording = None
         self.process = None
         self.recording_source = None
+        self.last_source = None
+        self.stopped_source = None
+        self.failed_source = None
+        self.recording_error = None
+        self.disk_paused = False
+        self.disk_recovered_at = None
         self.heartbeat = {"state": "unavailable", "provider": None, "error": None, "last_seen": None}
         self.heartbeat_at = 0
         self.recordings_dir = config.data_dir / "recordings"
@@ -71,6 +79,33 @@ class Media:
     def disk_free(self):
         return shutil.disk_usage(self.recordings_dir).free
 
+    @property
+    def recording_state(self):
+        if self.archived:
+            return "archived"
+        if self.recording:
+            return "recording"
+        if self.stopped_source is not None and self.stopped_source == self.last_source:
+            return "stopped"
+        if self.failed_source is not None and self.failed_source == self.last_source:
+            return "error"
+        if not self.config.auto_record:
+            return "manual"
+        if not self.online:
+            return "waiting"
+        return "disk_paused" if self.disk_paused else "waiting"
+
+    @property
+    def can_stop_recording(self):
+        return not self.archived and bool(self.recording or (
+            self.config.auto_record and self.last_source and self.stopped_source != self.last_source
+        ))
+
+    @property
+    def disk_resume_bytes(self):
+        headroom = min(256 * 1024 ** 2, max(16 * 1024 ** 2, self.min_free_bytes // 10))
+        return self.min_free_bytes + headroom
+
     async def read_path(self):
         response = await self.client.get(self.config.media_api + "/v3/paths/get/" + self.path)
         if response.status_code == 404:
@@ -78,7 +113,7 @@ class Media:
         response.raise_for_status()
         return response.json()
 
-    async def refresh(self):
+    async def refresh(self, *, allow_auto=True):
         async with self.lock:
             if self.archived:
                 return
@@ -112,15 +147,59 @@ class Media:
                                               (self.session_id, self.started_at, self.stream_id))
                 self.source = source
             self.online, self.tracks = online, path.get("tracks") or []
+            if online and source != self.last_source:
+                self.last_source = source
+                self.stopped_source = self.failed_source = None
+                self.recording_error = None
+                # Storage recovery belongs to the disk, not the publisher. A
+                # reconnect must not bypass headroom and the stable-time gate.
+                self.disk_recovered_at = None
             self.bitrate = self.meter.update(source, path.get("bytesReceived", 0), time.monotonic())
-            if self.process and self.process.returncode is not None:
-                await self.stop_locked("Recorder exited unexpectedly", interrupted=True)
             if self.disk_free() < self.min_free_bytes:
+                self.disk_paused, self.disk_recovered_at = True, None
                 if self.recording:
                     await self.stop_locked("Recording stopped: disk space below configured reserve", interrupted=True)
                 self.warning = "Low disk space. Recording and face analysis are paused until space is freed."
-            elif self.warning and self.warning.startswith("Low disk"):
-                self.warning = None
+            else:
+                if self.process and self.process.returncode is not None:
+                    failed_source = self.recording_source
+                    await self.stop_locked("Recorder exited unexpectedly", interrupted=True)
+                    self.failed_source = failed_source
+                    self.recording_error = self.warning
+                elif self.warning and self.warning.startswith("Low disk"):
+                    self.warning = None
+            if allow_auto:
+                await self.auto_start_locked()
+
+    async def auto_start_locked(self):
+        if not self.online or not self.available:
+            self.disk_recovered_at = None
+            return
+        if (not self.config.auto_record or self.recording or self.archived
+                or self.source in (self.stopped_source, self.failed_source)):
+            return
+        if self.disk_paused:
+            if self.disk_free() < self.disk_resume_bytes:
+                self.disk_recovered_at = None
+                return
+            now = time.monotonic()
+            if self.disk_recovered_at is None:
+                self.disk_recovered_at = now
+                return
+            if now - self.disk_recovered_at < DISK_RECOVERY_SECONDS:
+                return
+        try:
+            await self.start_locked()
+        except Exception as error:
+            # Latch failures to the publisher, not the short-lived API session.
+            # Never create a new failed recording on every monitor tick.
+            if self.disk_free() < self.min_free_bytes:
+                self.disk_paused, self.disk_recovered_at = True, None
+            else:
+                self.failed_source = self.source
+                self.recording_error = (str(error.detail) if isinstance(error, HTTPException)
+                                        else "Automatic recording could not start; retry manually or reconnect")
+                self.warning = self.recording_error
 
     async def monitor(self):
         while True:
@@ -134,40 +213,63 @@ class Media:
             await asyncio.sleep(1)
 
     async def start(self):
-        await self.refresh()
+        await self.refresh(allow_auto=False)
         async with self.lock:
-            if self.archived:
-                raise HTTPException(409, "Stream is archived")
             if self.recording:
-                raise HTTPException(409, "A recording is already running")
-            if not self.available or not self.online:
-                raise HTTPException(409, "Connect a stream before recording")
-            if self.disk_free() < self.min_free_bytes:
-                raise HTTPException(409, "Insufficient free disk space")
-            if not any(track.startswith("H264") for track in self.tracks):
-                raise HTTPException(409, "Recording requires H.264 video; set your encoder to H.264/AAC")
-            recording_id, started = str(uuid.uuid4()), utcnow()
-            target = self.recordings_dir / f"{recording_id}.mp4"
+                return dict(self.recording)
+            self.stopped_source = self.failed_source = None
+            self.recording_error = None
             try:
-                self.process = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-hide_banner", "-loglevel", "error",
-                    "-rtsp_transport", "tcp", "-timeout", "3000000", "-i", self.reader_url,
-                    "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
-                    "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-                    "-flush_packets", "1", "-f", "mp4", "-n", str(target),
-                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-            except OSError:
-                raise HTTPException(503, "FFmpeg could not start") from None
-            self.recording = {"id": recording_id, "started_at": started}
-            self.recording_source = self.source
-            with self.store.db:
-                self.store.db.execute("""INSERT INTO recordings (id, session_id, started_at, status, stream_id)
-                                      VALUES (?, ?, ?, 'recording', ?)""",
-                                      (recording_id, self.session_id, started, self.stream_id))
-            self.warning = None
+                return await self.start_locked()
+            except Exception as error:
+                if self.disk_free() < self.min_free_bytes:
+                    self.disk_paused, self.disk_recovered_at = True, None
+                elif self.source:
+                    self.failed_source = self.source
+                    self.recording_error = (str(error.detail) if isinstance(error, HTTPException)
+                                            else "Recording could not start; retry manually or reconnect")
+                raise
+
+    async def start_locked(self):
+        if self.archived:
+            raise HTTPException(409, "Stream is archived")
+        if self.recording:
             return dict(self.recording)
+        if not self.available or not self.online:
+            raise HTTPException(409, "Connect a stream before recording")
+        if self.disk_free() < self.min_free_bytes:
+            raise HTTPException(409, "Insufficient free disk space")
+        if not any(track.startswith("H264") for track in self.tracks):
+            raise HTTPException(409, "Recording requires H.264 video; set your encoder to H.264/AAC")
+        recording_id, started = str(uuid.uuid4()), utcnow()
+        target = self.recordings_dir / f"{recording_id}.mp4"
+        # Persist intent before launching FFmpeg so database failures cannot leave
+        # an untracked recording process consuming disk space.
+        with self.store.db:
+            self.store.db.execute("""INSERT INTO recordings (id, session_id, started_at, status, stream_id)
+                                  VALUES (?, ?, ?, 'recording', ?)""",
+                                  (recording_id, self.session_id, started, self.stream_id))
+        try:
+            self.process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-rtsp_transport", "tcp", "-timeout", "3000000", "-i", self.reader_url,
+                "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+                "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+                "-flush_packets", "1", "-f", "mp4", "-n", str(target),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError:
+            with self.store.db:
+                self.store.db.execute("UPDATE recordings SET status='error', ended_at=?, error=? WHERE id=?",
+                                      (utcnow(), "FFmpeg could not start", recording_id))
+            raise HTTPException(503, "FFmpeg could not start") from None
+        self.recording = {"id": recording_id, "started_at": started}
+        self.recording_source = self.source
+        self.stopped_source = self.failed_source = None
+        self.recording_error = self.warning = None
+        self.disk_paused, self.disk_recovered_at = False, None
+        return dict(self.recording)
 
     async def stop_locked(self, reason=None, interrupted=False):
         if not self.recording:
@@ -205,6 +307,7 @@ class Media:
 
     async def stop(self):
         async with self.lock:
+            self.stopped_source = self.source or self.last_source
             await self.stop_locked()
 
     async def close(self):

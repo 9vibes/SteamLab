@@ -1,8 +1,8 @@
 # KUNAS/Labs
 
 Self-hosted OBS monitoring with an authenticated browser dashboard, live HLS playback,
-manual MP4 recording, and optional face grouping. Version 1.1.0 supports up to
-four active feeds under one administrator password, not
+MP4 recording, and optional face grouping. Version 1.2.0 supports Multi-view and
+default-on automatic recording for up to four active feeds under one administrator password, not
 multi-user accounts or an identity-recognition service. There is no demo data.
 The exact API and service interface is [docs/API.md](docs/API.md).
 
@@ -13,12 +13,20 @@ remain unchanged so existing deployments retain their data and configuration.
 [KUNAS community store](https://github.com/9vibes/KNS-Umbrel).
 See [docs/UMBREL.md](docs/UMBREL.md) for requirements, login, and OBS setup.
 
-**Four-stream support requires the complete 1.1.0 update.**
+**Deploy the complete 1.2.0 update, retaining the four-stream foundation from 1.1.0.**
 Deploy matching backend, frontend, worker, and MediaMTX configuration atomically;
 do not mix the new registry/UI with older components. This requires no additional
 ingest port, container, or app ID change. The implementation contract is
 [docs/MULTISTREAM.md](docs/MULTISTREAM.md); verification results and limits are listed in
 [docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+**1.2.0 upgrade warning: `AUTO_RECORD` defaults to `true`.** Ready feeds record
+automatically, including already-live feeds after an update or backend restart,
+**even if you previously stopped recording manually**. Stop is not a persistent
+opt-out. For manual-only operation, stop encoders before updating, set the operator
+deployment setting `AUTO_RECORD=false`, and apply it before reconnecting encoders.
+Settings shows this read-only policy; it is not a browser toggle. Face analysis
+remains a separate, explicit opt-in. See [docs/MULTIVIEW.md](docs/MULTIVIEW.md).
 
 ## Streams
 
@@ -37,6 +45,21 @@ ingest port, container, or app ID change. The implementation contract is
 - Existing scoped REST routes without `stream_id` still target Stream 1. The HLS
   player uses `/api/streams/{id}/live/index.m3u8` so relative playlists and segments
   stay scoped; `/api/live/{file}` remains a default-feed alias.
+
+### Multi-view (1.2.0)
+
+Choose **Single view** or **Multi-view** in the workspace. Multi-view shows only
+connected (`online`), non-archived streams, up to four: two columns on desktop
+(2x2 with four feeds), one column on mobile. Each named tile has recording controls
+and telemetry plus independent **Faces**, **Recordings**, and **Settings** tabs
+below its video, never beside it. Players start muted.
+
+The stream directory and add/rename/archive controls remain outside the grid.
+Directory selection in Multi-view targets management, not which live tiles appear.
+Use Single view for offline-feed settings and history; choosing archived history
+switches to Single view. An empty grid explains how to connect a feed or switch
+views. View and tab changes never start/stop recording or analysis and do not
+affect server feeds; requests and controls remain scoped to each stream.
 
 ## Requirements
 
@@ -175,6 +198,8 @@ recordings, backfilling legacy rows to Stream 1 (`stream`). It preserves existin
 row IDs, files, and the publishing key: files are not moved or overwritten.
 Default-stream settings retain their original keys; additional streams use
 `stream:{id}:{key}` settings. Back up the whole volume before migration.
+Version 1.2.0 retains this schema, keys, files, and storage layout; it introduces
+no new database format or API migration beyond the existing 1.1.0 migration.
 
 Analysis is **off initially and after every backend restart** and is explicitly enabled per feed in the app. Defaults are
 7-day face retention, `MAX_FACES=2000`, `ANALYSIS_FPS=2`,
@@ -186,21 +211,51 @@ faces from existing video recordings.
 `MAX_FACES` is one application-wide total across all feeds, including archived
 face groups, not a separate allowance per feed. Group matching remains stream-scoped.
 
-Recording is manual: the backend runs FFmpeg with direct stream copy into one
-fragmented MP4 file per manual recording session. It does not use MediaMTX's
-recording feature, transcode video, or silently resume after a crash or restart.
+In **1.2.0**, `AUTO_RECORD=true` is the backend
+default in `Config`, standalone/Umbrel Compose, `.env.example`, and the setup
+script's generated `.env`. Set `AUTO_RECORD=false` in deployment configuration
+for manual-only recording and recreate the backend. Settings displays this
+read-only policy; it is not an analysis toggle or a browser recording preference.
+
+Each backend monitor automatically starts one recording when its configured feed
+is confirmed ready, including feeds already live when the backend starts/restarts.
+No viewer needs to be open. The backend uses the same authenticated reader, H.264,
+and disk guards as explicit Start, running FFmpeg with direct stream copy into a
+new fragmented MP4 per recording. It does not use MediaMTX recording or transcode.
 Completed fragments can remain recoverable after interruption, but the unfinished
 tail may be lost; the backend labels interrupted recordings separately from ready files.
-Start a new recording explicitly after reconnecting or recovering.
+
+- Disconnect finalizes the old recording; a genuine publisher reconnect starts a
+  new file in automatic mode, not an append to the old one. `AUTO_RECORD=false`
+  requires explicit Start instead.
+- Explicit **Stop** suppresses automatic recording for the current publisher
+  fingerprint, even if no recorder exists because storage is paused. This latch
+  survives temporary MediaMTX API outages; a different publisher connection clears
+  it. It is not a persistent opt-out across backend restarts; use `AUTO_RECORD=false`
+  for that policy.
+- Explicit **Start** retries/resumes and overrides Stop or a latched failure,
+  subject to the normal guards. If recording is already active it returns that
+  recording with HTTP 200, without creating a duplicate.
+- A spawn failure or unexpected recorder exit is latched for the same connection
+  and exposed as `recording_state=error` with a sanitized `recording_error`.
+  There is no repeated automatic attempt/file churn; use Start or reconnect to retry.
 
 `MIN_FREE_GB=2` is the shared low-disk guard for starting/continuing all recordings,
-not a separate reserve per feed.
-Below that reserve, the worker pauses decoding and the dashboard displays a storage
-warning. Face analysis resumes when space recovers; recording must be started manually.
+not a separate reserve per feed or a storage quota. Below that reserve, recording
+stops, the worker pauses decoding, and the dashboard displays a storage warning.
+In automatic mode, a disk-paused recorder resumes only after free space is above
+the reserve plus recovery headroom for five continuous seconds, even across
+publisher reconnects, unless manually stopped. Headroom is 10% of the reserve,
+bounded to 16-256 MiB. Face analysis can
+resume when space recovers only if already opted in; `AUTO_RECORD=false` requires
+explicit Start for video recovery.
 The backend also rejects in-flight face observations with HTTP 409 while space is low.
 Recordings are **never automatically deleted**, including when space runs low;
-delete or archive them deliberately. Face retention does not apply to videos.
-Monitor actual volume-host capacity. Downloads/playback use authenticated,
+export completed files to separate archival storage or delete them deliberately.
+Face retention does not apply to videos. Four simultaneous recordings consume
+storage at the combined rate of all four feeds, including with no dashboard open.
+Monitor actual volume-host capacity; plan separate storage/quota management rather
+than treating the reserve as a per-feed quota. Downloads/playback use authenticated,
 Range-capable `/api/recordings/{id}/file`, with `?download=1` for attachments.
 
 ```sh
@@ -242,7 +297,7 @@ not prove GPU inference works; verify the reported provider on real hardware.
 Both images install checksum-verified models and licenses during the build.
 Do not mount an empty directory over `/models` and hide those models.
 
-The local multistream worker shares one initialized inference engine (one NVIDIA
+The multistream worker shares one initialized inference engine (one NVIDIA
 engine in CUDA mode). Up to four independent FFmpeg decoders drain concurrently
 into bounded latest-frame slots; inference fairly round-robins those slots without
 concurrent calls to the mutable OpenCV detector. Config polling and heartbeats run

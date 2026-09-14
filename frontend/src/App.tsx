@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import {
   api,
@@ -321,6 +321,7 @@ function StreamWorkspace({
   );
   const [streams, setStreams] = useState<StreamList | null>(null);
   const [selectedId, setSelectedId] = useState("stream");
+  const [multiView, setMultiView] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState<{
     kind: "add" | "rename" | "archive";
@@ -346,6 +347,13 @@ function StreamWorkspace({
   }, 2000);
 
   const selected = streams?.items.find((item) => item.id === selectedId);
+  const visibleStreams = multiView
+    ? (streams?.items
+        .filter((item) => !item.archived_at && item.online)
+        .slice(0, 4) ?? [])
+    : selected
+      ? [selected]
+      : [];
   const limit = Math.min(4, streams?.max_streams ?? 4);
   const atLimit = !streams || streams.active_count >= limit;
   const archiveBlocked =
@@ -388,6 +396,7 @@ function StreamWorkspace({
         await request(`/api/streams/${encodeURIComponent(form.stream!.id)}`, {
           method: "DELETE",
         });
+        setMultiView(false);
         setStreams(
           (current) =>
             current && {
@@ -430,7 +439,10 @@ function StreamWorkspace({
                     ),
             },
         );
-        if (form.kind === "add") setSelectedId(result.id);
+        if (form.kind === "add") {
+          setSelectedId(result.id);
+          setMultiView(false);
+        }
       }
       setForm(null);
     } catch (error) {
@@ -519,8 +531,10 @@ function StreamWorkspace({
             </div>
           </div>
           <p className="input-help">
-            Selection only changes this view. All active streams keep running
-            independently.
+            {multiView
+              ? `Managing: ${selected?.name ?? "No stream selected"}. Directory selection targets Rename / Archive, not the live grid.`
+              : `Selected stream: ${selected?.name ?? "Connecting"}. Selection only changes this view.`}{" "}
+            All active streams keep running independently.
           </p>
           {streams && (
             <div
@@ -570,7 +584,10 @@ function StreamWorkspace({
                 id="archived-stream"
                 value={selected?.archived_at ? selectedId : ""}
                 onChange={(event) => {
-                  if (event.target.value) setSelectedId(event.target.value);
+                  if (event.target.value) {
+                    setSelectedId(event.target.value);
+                    setMultiView(false);
+                  }
                 }}
               >
                 <option value="">Choose an archived stream</option>
@@ -612,24 +629,99 @@ function StreamWorkspace({
           )}
         </div>
       </section>
-      {selected ? (
-        <Dashboard
-          key={`${selected.id}:${!!selected.archived_at}`}
-          stream={selected}
-          request={request}
-          onUnauthorized={onUnauthorized}
-        />
-      ) : (
-        <Loading text="Loading streams" />
-      )}
+      <main className="main-content workspace-content">
+        <div className="view-toolbar">
+          <div>
+            <span className="eyebrow amber">OPERATIONS / MASTER CONTROL</span>
+            <h1>
+              Broadcast workspace<span className="heading-dot">.</span>
+            </h1>
+            <p className="selected-stream-name">
+              {multiView
+                ? `${visibleStreams.length} connected feeds / Independent stream controls`
+                : `${selected?.name ?? "Connecting"} / ${selected?.archived_at ? "Preserved history" : "Your signal, sessions, and intelligence in one place."}`}
+            </p>
+          </div>
+          <div
+            className="view-options"
+            role="group"
+            aria-label="Workspace view"
+          >
+            <button
+              className={`button small ${!multiView ? "primary" : ""}`}
+              aria-pressed={!multiView}
+              onClick={() => setMultiView(false)}
+            >
+              Single view
+            </button>
+            <button
+              className={`button small ${multiView ? "primary" : ""}`}
+              aria-pressed={multiView}
+              onClick={() => setMultiView(true)}
+            >
+              Multi-view
+            </button>
+          </div>
+        </div>
+        <div
+          className={
+            multiView ? "workspace-feeds multi-view" : "workspace-feeds"
+          }
+        >
+          {visibleStreams.map((item) => (
+            <Dashboard
+              key={item.id}
+              stream={item}
+              compact={multiView}
+              request={request}
+              onUnauthorized={onUnauthorized}
+            />
+          ))}
+        </div>
+        {!streams ? (
+          <Loading text="Loading streams" />
+        ) : multiView && !visibleStreams.length ? (
+          <section className="multi-empty" aria-label="No connected streams">
+            <Empty icon="signal" title="No connected streams">
+              Connect an encoder using a stream's RTMP credentials in Single
+              view / Settings. Only connected, non-archived streams appear here.
+            </Empty>
+            <button
+              className="button primary"
+              onClick={() => setMultiView(false)}
+            >
+              Switch to single view
+            </button>
+          </section>
+        ) : null}
+        <footer className="app-footer">
+          <span>
+            <span
+              className={`status-dot ${streams && !error ? "green" : ""}`}
+            />
+            {error
+              ? "RECONNECTING TO BACKEND"
+              : streams
+                ? "CONNECTED TO BACKEND"
+                : "CONNECTING TO BACKEND"}
+          </span>
+          <span>
+            STATUS 1s <span className="tiny-divider">/</span> CATALOG 4s{" "}
+            <span className="tiny-divider">/</span> TIMES LOCAL
+          </span>
+          <span>
+            KUNAS/Labs<span className="amber"> CONTROL ROOM</span>
+          </span>
+        </footer>
+      </main>
       {form && (
         <Modal
           title={
             form.kind === "add"
               ? "Add stream"
               : form.kind === "rename"
-                ? "Rename stream"
-                : "Archive stream?"
+                ? `Rename stream / ${form.stream?.name}`
+                : `Archive stream? / ${form.stream?.name}`
           }
           onClose={() => {
             if (!busy) setForm(null);
@@ -706,10 +798,12 @@ function StreamWorkspace({
 
 function Dashboard({
   stream,
+  compact,
   request: globalRequest,
   onUnauthorized,
 }: {
   stream: Stream;
+  compact: boolean;
   request: Request;
   onUnauthorized: () => void;
 }) {
@@ -721,6 +815,8 @@ function Dashboard({
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [catalogError, setCatalogError] = useState("");
   const [tab, setTab] = useState<Tab>("faces");
+  const id = useId();
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [session, setSession] = useState("");
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -820,11 +916,65 @@ function Dashboard({
     !archived && !!status && !statusError && status.media_available;
   const live = !archived && !!status?.online;
   const recording = archived ? null : status?.recording;
+  const autoRecord = status?.auto_record ?? catalog?.settings.auto_record;
+  const recordingState = archived ? "archived" : status?.recording_state;
+  const stateLabel = recordingState
+    ? {
+        recording: "Recording in progress",
+        waiting: "Waiting for a connection",
+        stopped: "Stopped for this connection",
+        disk_paused: "Paused for low storage",
+        error: "Recording failed",
+        manual: "Manual-only policy",
+        archived: "Archived history",
+      }[recordingState]
+    : "Checking recording state";
   const controlsDisabled =
     archived || !status || !!statusError || busy !== null;
   const analysisEnabled =
     !archived &&
     (status?.analysis.enabled ?? catalog?.settings.analysis_enabled ?? false);
+
+  function changeRecording(stop: boolean) {
+    void act(
+      "recording",
+      async () => {
+        if (stop) {
+          await request("/api/recordings/stop", { method: "POST" });
+          setStatus((current) =>
+            current
+              ? {
+                  ...current,
+                  recording: null,
+                  recording_state: "stopped",
+                  recording_error: null,
+                  can_stop_recording: false,
+                }
+              : current,
+          );
+        } else {
+          const result = await request<NonNullable<Status["recording"]>>(
+            "/api/recordings/start",
+            { method: "POST" },
+          );
+          setStatus((current) =>
+            current
+              ? {
+                  ...current,
+                  recording: result,
+                  recording_state: "recording",
+                  recording_error: null,
+                  can_stop_recording: true,
+                }
+              : current,
+          );
+        }
+      },
+      stop
+        ? "Recording stopped for this connection. Any capture will appear in your library when finalized."
+        : "Recording started.",
+    );
+  }
 
   function deleteFace(face: Face) {
     setConfirmation({
@@ -888,28 +1038,17 @@ function Dashboard({
     else return;
     event.preventDefault();
     setTab(tabs[next]);
-    document.getElementById(`tab-${tabs[next]}`)?.focus();
+    tabRefs.current[next]?.focus();
   }
 
   return (
-    <div className="dashboard">
-      <main className="main-content">
+    <section
+      className={`stream-dashboard ${compact ? "compact" : ""}`}
+      aria-label={`${stream.name} workspace`}
+    >
+      <div className="stream-content">
         <div className="page-heading">
-          <div>
-            <div className="eyebrow">
-              <span className="amber">OPERATIONS</span>
-              <span className="slash">/</span>MASTER CONTROL
-            </div>
-            <h1>
-              Broadcast workspace<span className="heading-dot">.</span>
-            </h1>
-            <p className="selected-stream-name">
-              {stream.name} /{" "}
-              {archived
-                ? "Preserved history"
-                : "Your signal, sessions, and intelligence in one place."}
-            </p>
-          </div>
+          {compact && <h2 className="tile-name">{stream.name}</h2>}
           <div
             className={`connection-pill ${statusError ? "error" : live ? "live" : ""}`}
           >
@@ -967,7 +1106,10 @@ function Dashboard({
           </div>
         )}
         <div className="console-grid">
-          <section className="broadcast-column" aria-label="Live broadcast">
+          <section
+            className="broadcast-column"
+            aria-label={`${stream.name} live broadcast`}
+          >
             <div className="panel preview-panel">
               <div className="panel-heading">
                 <h2>
@@ -987,6 +1129,7 @@ function Dashboard({
                 </div>
               ) : (
                 <LivePlayer
+                  streamName={stream.name}
                   manifestUrl={`/api/streams/${encodeURIComponent(stream.id)}/live/index.m3u8`}
                   online={live}
                   available={status ? status.media_available : true}
@@ -1051,6 +1194,7 @@ function Dashboard({
             </div>
             <section
               className={`panel recording-control ${recording ? "is-recording" : ""}`}
+              aria-label={`${stream.name} recording controls`}
             >
               <div className="record-control-icon">
                 <span
@@ -1058,13 +1202,11 @@ function Dashboard({
                 />
               </div>
               <div className="record-description">
-                <h2>
-                  {recording ? "Recording in progress" : "Manual recording"}
-                </h2>
+                <h2>{recording ? "Recording in progress" : "Recording"}</h2>
                 <p>
                   {recording
                     ? `Started ${timestamp(recording.started_at)}`
-                    : "Capture the live feed to your local library."}
+                    : stateLabel}
                 </p>
               </div>
               <button
@@ -1077,31 +1219,7 @@ function Dashboard({
                       (!!status &&
                         status.disk_free_bytes <= status.min_free_bytes)))
                 }
-                onClick={() => {
-                  void act(
-                    "recording",
-                    async () => {
-                      if (recording) {
-                        await request("/api/recordings/stop", {
-                          method: "POST",
-                        });
-                        setStatus((current) =>
-                          current ? { ...current, recording: null } : current,
-                        );
-                      } else {
-                        const result = await request<
-                          NonNullable<Status["recording"]>
-                        >("/api/recordings/start", { method: "POST" });
-                        setStatus((current) =>
-                          current ? { ...current, recording: result } : current,
-                        );
-                      }
-                    },
-                    recording
-                      ? "Recording stopped. The file will appear in your library when finalized."
-                      : "Recording started.",
-                  );
-                }}
+                onClick={() => changeRecording(!!recording)}
               >
                 {busy === "recording" ? (
                   <span className="spinner" />
@@ -1116,6 +1234,45 @@ function Dashboard({
                     ? "Stop recording"
                     : "Start recording"}
               </button>
+              {!recording && (recordingState === "disk_paused" ||
+                (autoRecord && !available && status?.can_stop_recording)) && (
+                <button
+                  className="button record-stop"
+                  disabled={controlsDisabled}
+                  onClick={() => changeRecording(true)}
+                >
+                  Stop recording
+                </button>
+              )}
+              <div className="recording-policy">
+                <p>
+                  {autoRecord === undefined
+                    ? "Checking server recording policy."
+                    : autoRecord
+                      ? compact
+                        ? "Auto-record on. Stop holds this connection; reconnecting starts again. Policy details are in Settings."
+                        : "Automatic recording is on (server default). Connecting starts recording on the server, even with no viewers. Stop holds for this publisher connection; a new connection starts a new recording. Start retries or resumes."
+                      : compact
+                        ? "Manual recording. Start records this stream."
+                        : "Automatic recording is off. Start records this stream; reconnecting requires Start again."}
+                </p>
+                {autoRecord && !compact && (
+                  <p>
+                    Low storage pauses recording. It resumes after free space
+                    stays above the reserve plus headroom for 5 continuous
+                    seconds, unless stopped. Recorder failures require Start or
+                    a new connection; no automatic failure retries.
+                  </p>
+                )}
+                {autoRecord && !available && status?.can_stop_recording && (
+                  <p>Media server unavailable. Stop keeps this publisher stopped when the connection recovers.</p>
+                )}
+                {status?.recording_error && (
+                  <p className="danger-text" role="alert">
+                    {status.recording_error}
+                  </p>
+                )}
+              </div>
             </section>
             <section className="session-strip">
               <Icon name="clock" size={16} />
@@ -1142,16 +1299,26 @@ function Dashboard({
               </span>
             </div>
           </section>
-          <section className="panel inspector" aria-label="Broadcast tools">
-            <div className="tabs" role="tablist" aria-label="Broadcast tools">
+          <section
+            className="panel inspector"
+            aria-label={`${stream.name} broadcast tools`}
+          >
+            <div
+              className="tabs"
+              role="tablist"
+              aria-label={`${stream.name} broadcast tools`}
+            >
               {tabs.map((name, index) => (
                 <button
                   key={name}
-                  id={`tab-${name}`}
+                  id={`${id}-tab-${name}`}
+                  ref={(element) => {
+                    tabRefs.current[index] = element;
+                  }}
                   type="button"
                   role="tab"
                   aria-selected={tab === name}
-                  aria-controls={`panel-${name}`}
+                  aria-controls={`${id}-panel-${name}`}
                   tabIndex={tab === name ? 0 : -1}
                   className={tab === name ? "active" : ""}
                   onClick={() => setTab(name)}
@@ -1176,9 +1343,9 @@ function Dashboard({
               </div>
             )}
             <div
-              id={`panel-${tab}`}
+              id={`${id}-panel-${tab}`}
               role="tabpanel"
-              aria-labelledby={`tab-${tab}`}
+              aria-labelledby={`${id}-tab-${tab}`}
               tabIndex={0}
               className="tab-panel"
             >
@@ -1261,9 +1428,9 @@ function Dashboard({
                   </div>
                   <div className="catalog-toolbar">
                     <div className="filter-field">
-                      <label htmlFor="session-filter">Session</label>
+                      <label htmlFor={`${id}-session-filter`}>Session</label>
                       <select
-                        id="session-filter"
+                        id={`${id}-session-filter`}
                         value={session}
                         onChange={(event) => {
                           setSession(event.target.value);
@@ -1404,7 +1571,7 @@ function Dashboard({
                     <Empty icon="video" title="Your archive starts here">
                       {archived
                         ? "There are no preserved recordings for this stream."
-                        : "Start a manual recording while your stream is online. Completed captures will appear here for playback and download."}
+                        : "Completed captures appear here for playback and download. Recording follows the server policy; use Start to retry or resume an online stream."}
                     </Empty>
                   ) : (
                     <div className="recording-list">
@@ -1549,30 +1716,11 @@ function Dashboard({
             </div>
           </section>
         </div>
-        <footer className="app-footer">
-          <span>
-            <span
-              className={`status-dot ${status && !statusError ? "green" : ""}`}
-            />
-            {statusError
-              ? "RECONNECTING TO BACKEND"
-              : status
-                ? "CONNECTED TO BACKEND"
-                : "CONNECTING TO BACKEND"}
-          </span>
-          <span>
-            STATUS 1s <span className="tiny-divider">/</span> CATALOG 4s{" "}
-            <span className="tiny-divider">/</span> TIMES LOCAL
-          </span>
-          <span>
-            KUNAS/Labs<span className="amber"> CONTROL ROOM</span>
-          </span>
-        </footer>
-      </main>
+      </div>
       {confirmation &&
         !(archived && confirmation.label === "Regenerate key") && (
           <Modal
-            title={confirmation.title}
+            title={`${confirmation.title} / ${stream.name}`}
             onClose={() => {
               if (!busy) {
                 setConfirmation(null);
@@ -1627,7 +1775,7 @@ function Dashboard({
         )}
       {playback && (
         <Modal
-          title="Recording playback"
+          title={`Recording playback / ${stream.name}`}
           wide
           onClose={() => setPlayback(null)}
         >
@@ -1636,8 +1784,9 @@ function Dashboard({
             src={playback.playback_url ?? undefined}
             controls
             autoPlay
+            muted
             playsInline
-            aria-label={`Recording from ${timestamp(playback.started_at)}`}
+            aria-label={`${stream.name} recording from ${timestamp(playback.started_at)}`}
             onError={() => {
               setPlaybackError(
                 "This recording could not be played. It may be incomplete or use a codec unsupported by this browser. Try downloading the file.",
@@ -1667,7 +1816,7 @@ function Dashboard({
           </div>
         </Modal>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -1681,6 +1830,7 @@ function Loading({ text }: { text: string }) {
 }
 
 function BitrateChart({ values }: { values: number[] }) {
+  const gradientId = useId();
   const samples = values.filter(Number.isFinite).slice(-90);
   if (!samples.length)
     return <div className="chart-empty">Waiting for bitrate samples</div>;
@@ -1700,7 +1850,7 @@ function BitrateChart({ values }: { values: number[] }) {
       aria-label={`Recent incoming bitrate, ${samples.length} samples, peak ${Math.max(...samples).toFixed(2)} megabits per second`}
     >
       <defs>
-        <linearGradient id="bitrate-fill" x1="0" x2="0" y1="0" y2="1">
+        <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stopColor="#edb557" stopOpacity="0.22" />
           <stop offset="100%" stopColor="#edb557" stopOpacity="0" />
         </linearGradient>
@@ -1710,7 +1860,7 @@ function BitrateChart({ values }: { values: number[] }) {
         stroke="currentColor"
         strokeDasharray="2 5"
       />
-      <polygon points={`0,48 ${points} 300,48`} fill="url(#bitrate-fill)" />
+      <polygon points={`0,48 ${points} 300,48`} fill={`url(#${gradientId})`} />
       <polyline
         points={points}
         fill="none"
@@ -1822,6 +1972,7 @@ function SettingsPanel({
   onRegenerate: () => void;
 }) {
   const [revealed, setRevealed] = useState(false);
+  const id = useId();
   useEffect(() => {
     setRevealed(false);
   }, [settings.stream_key]);
@@ -1869,10 +2020,10 @@ function SettingsPanel({
             In OBS or your encoder, choose a custom RTMP service and enter these
             credentials.
           </p>
-          <label htmlFor="rtmp-url">Server URL</label>
+          <label htmlFor={`${id}-rtmp-url`}>Server URL</label>
           <div className="credential-field">
             <input
-              id="rtmp-url"
+              id={`${id}-rtmp-url`}
               readOnly
               value={settings.rtmp_url}
               spellCheck={false}
@@ -1887,8 +2038,8 @@ function SettingsPanel({
               <Icon name="copy" size={16} />
             </button>
           </div>
-          <label htmlFor="stream-key">
-            Stream key
+          <label htmlFor={`${id}-stream-key`}>
+            Stream key{" "}
             <span className="label-tag">
               <Icon name="lock" size={11} />
               SECRET
@@ -1896,7 +2047,7 @@ function SettingsPanel({
           </label>
           <div className="credential-field">
             <input
-              id="stream-key"
+              id={`${id}-stream-key`}
               type={revealed ? "text" : "password"}
               readOnly
               value={settings.stream_key}
@@ -1943,6 +2094,15 @@ function SettingsPanel({
           </p>
         </div>
       )}
+      <div className="settings-section">
+        <h3>Recording policy</h3>
+        <p>
+          {settings.auto_record
+            ? "Automatic recording is on (AUTO_RECORD=true, the server default). The server records connected streams without an open browser."
+            : "Automatic recording is off (AUTO_RECORD=false). Use Start for each recording."}{" "}
+          This policy is read-only. Face analysis remains opt-in.
+        </p>
+      </div>
       <div className="settings-section">
         <h3>
           <span className="step-label">02</span>Analysis configuration
