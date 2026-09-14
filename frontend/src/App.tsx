@@ -20,10 +20,12 @@ import type {
   StreamList,
 } from "./api";
 import LivePlayer from "./LivePlayer";
+import SignalDirectory from "./SignalDirectory";
+import type { DirectoryProps } from "./SignalDirectory";
 import { Brand, Empty, Icon, Modal } from "./ui";
 
 const PAGE_SIZE = 12;
-const tabs = ["faces", "recordings", "settings"] as const;
+const tabs = ["faces", "directory", "recordings", "settings"] as const;
 type Tab = (typeof tabs)[number];
 type Catalog = {
   key: string;
@@ -322,8 +324,7 @@ function StreamWorkspace({
   const [streams, setStreams] = useState<StreamList | null>(null);
   const [selectedId, setSelectedId] = useState("stream");
   const [multiView, setMultiView] = useState(false);
-  const [directoryOpen, setDirectoryOpen] = useState(false);
-  const directoryId = useId();
+  const viewControl = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState("");
   const [form, setForm] = useState<{
     kind: "add" | "rename" | "archive";
@@ -358,18 +359,10 @@ function StreamWorkspace({
       : [];
   const limit = Math.min(4, streams?.max_streams ?? 4);
   const atLimit = !streams || streams.active_count >= limit;
-  const archiveBlocked =
-    !selected ||
-    selected.is_default ||
-    !!selected.archived_at ||
-    selected.online ||
-    !!selected.recording ||
-    !selected.media_available ||
-    !!error;
-  function open(kind: "add" | "rename" | "archive") {
-    setDirectoryOpen(false);
-    setForm({ kind, stream: kind === "add" ? undefined : selected });
-    setName(kind === "rename" ? (selected?.name ?? "") : "");
+  function open(kind: "add" | "rename" | "archive", target?: Stream) {
+    if (busyRef.current) return;
+    setForm({ kind, stream: target });
+    setName(kind === "rename" ? (target?.name ?? "") : "");
     setFormError("");
   }
   async function submit(event: FormEvent) {
@@ -400,6 +393,7 @@ function StreamWorkspace({
           method: "DELETE",
         });
         setMultiView(false);
+        setSelectedId(form.stream!.id);
         setStreams(
           (current) =>
             current && {
@@ -492,274 +486,118 @@ function StreamWorkspace({
           </button>
         </div>
       </header>
-      <div className="workspace-layout">
-        <aside className="workspace-sidebar" aria-label="Workspace sidebar">
-          <button
-            className={`sidebar-tab ${directoryOpen ? "active" : ""} ${error ? "has-error" : ""}`}
-            aria-label="Signal Directory"
-            title="Signal Directory"
-            aria-haspopup="dialog"
-            aria-expanded={directoryOpen}
-            aria-controls={directoryOpen ? directoryId : undefined}
-            onClick={() => setDirectoryOpen(true)}
-          >
-            <Icon name="signal" size={22} />
-            <span>Signal Directory</span>
-            <span className="sidebar-count" aria-hidden="true">
-              {error
-                ? "!"
-                : streams
-                  ? `${streams.active_count}/${limit}`
-                  : "--"}
-            </span>
-          </button>
-        </aside>
-        {directoryOpen && (
-          <Modal
-            id={directoryId}
-            className="directory-drawer"
-            title="Signal Directory"
-            onClose={() => setDirectoryOpen(false)}
-          >
-            <section className="stream-shell" aria-label="Stream management">
-              <div className="panel stream-manager">
-                <div className="stream-toolbar">
-                  <div>
-                    <h2>
-                      Streams{" "}
-                      <span className="mono subdued">
-                        {streams
-                          ? `${streams.active_count} / ${limit} active`
-                          : "Connecting"}
-                      </span>
-                    </h2>
-                  </div>
-                  <div className="stream-actions">
-                    <button
-                      className="button small primary"
-                      disabled={atLimit || !!error || busy}
-                      onClick={() => open("add")}
-                    >
-                      Add stream
-                    </button>
-                    <button
-                      className="button small"
-                      disabled={!selected || busy}
-                      onClick={() => open("rename")}
-                    >
-                      Rename stream
-                    </button>
-                    <button
-                      className="button small"
-                      disabled={archiveBlocked || busy}
-                      onClick={() => open("archive")}
-                    >
-                      Archive stream
-                    </button>
-                  </div>
-                </div>
-                <p className="input-help">
-                  {multiView
-                    ? `Managing: ${selected?.name ?? "No stream selected"}. Directory selection targets Rename / Archive, not the live grid.`
-                    : `Selected stream: ${selected?.name ?? "Connecting"}. Selection only changes this view.`}{" "}
-                  All active streams keep running independently.
-                </p>
-                {streams && (
-                  <div
-                    className="stream-grid"
-                    role="group"
-                    aria-label="Active streams"
-                  >
-                    {streams.items
-                      .filter((item) => !item.archived_at)
-                      .map((item) => (
-                        <button
-                          key={item.id}
-                          className={`stream-card ${item.id === selectedId ? "selected" : ""}`}
-                          aria-pressed={item.id === selectedId}
-                          onClick={() => {
-                            setSelectedId(item.id);
-                            setDirectoryOpen(false);
-                          }}
-                        >
-                          <strong>{item.name}</strong>
-                          <span>
-                            <span
-                              className={`status-dot ${!error && item.online ? "green" : ""}`}
-                            />
-                            {error
-                              ? "Status unavailable"
-                              : !item.media_available
-                                ? "Media unavailable"
-                                : item.online
-                                  ? "Online"
-                                  : "Offline"}
-                            {item.is_default ? " / Default" : ""}
-                          </span>
-                          <span
-                            className={item.recording ? "amber" : "subdued"}
-                          >
-                            {error
-                              ? "Reconnecting"
-                              : item.recording
-                                ? "Recording"
-                                : "Not recording"}{" "}
-                            / {item.bitrate_mbps.toFixed(2)} Mbps
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                )}
-                {streams?.items.some((item) => item.archived_at) && (
-                  <div className="archive-selector">
-                    <label htmlFor="archived-stream">Archived history</label>
-                    <select
-                      id="archived-stream"
-                      value={selected?.archived_at ? selectedId : ""}
-                      onChange={(event) => {
-                        if (event.target.value) {
-                          setSelectedId(event.target.value);
-                          setMultiView(false);
-                          setDirectoryOpen(false);
-                        }
-                      }}
-                    >
-                      <option value="">Choose an archived stream</option>
-                      {streams.items
-                        .filter((item) => item.archived_at)
-                        .map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name} / Preserved history
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                )}
-                {atLimit && streams && (
-                  <p className="input-help">
-                    All {limit} active slots are in use. Archive an offline
-                    stream to add another.
-                  </p>
-                )}
-                {selected?.is_default && (
-                  <p className="input-help">
-                    The original default stream can be renamed, but cannot be
-                    archived.
-                  </p>
-                )}
-                {selected &&
-                  !selected.is_default &&
-                  !selected.archived_at &&
-                  archiveBlocked && (
-                    <p className="input-help">
-                      Archiving requires an offline stream, no recording, and an
-                      available media service.
-                    </p>
-                  )}
-                {error && (
-                  <div className="notice danger" role="alert">
-                    Stream directory unavailable. Retrying automatically.{" "}
-                    {error}
-                  </div>
-                )}
-              </div>
-            </section>
-          </Modal>
+      <main className="main-content">
+        {error && (
+          <div className="notice danger" role="alert">
+            Stream directory unavailable. Retrying automatically. {error}
+          </div>
         )}
-        <main className="main-content workspace-content">
-          {error && !directoryOpen && (
-            <div className="notice danger" role="alert">
-              Stream directory unavailable. Retrying automatically. {error}
-            </div>
-          )}
-          <div className="view-toolbar">
-            <div>
-              <span className="eyebrow amber">OPERATIONS / MASTER CONTROL</span>
-              <h1>
-                Broadcast workspace<span className="heading-dot">.</span>
-              </h1>
-              <p className="selected-stream-name">
-                {multiView
-                  ? `${visibleStreams.length} connected feeds / Independent stream controls`
-                  : `${selected?.name ?? "Connecting"} / ${selected?.archived_at ? "Preserved history" : "Your signal, sessions, and intelligence in one place."}`}
-              </p>
-            </div>
-            <div
-              className="view-options"
-              role="group"
-              aria-label="Workspace view"
-            >
-              <button
-                className={`button small ${!multiView ? "primary" : ""}`}
-                aria-pressed={!multiView}
-                onClick={() => setMultiView(false)}
-              >
-                Single view
-              </button>
-              <button
-                className={`button small ${multiView ? "primary" : ""}`}
-                aria-pressed={multiView}
-                onClick={() => setMultiView(true)}
-              >
-                Multi-view
-              </button>
-            </div>
+        <div className="view-toolbar">
+          <div>
+            <span className="eyebrow amber">OPERATIONS / MASTER CONTROL</span>
+            <h1>
+              Broadcast workspace<span className="heading-dot">.</span>
+            </h1>
+            <p className="selected-stream-name">
+              {multiView
+                ? `${visibleStreams.length} connected feeds / Independent stream controls`
+                : `${selected?.name ?? "Connecting"} / ${selected?.archived_at ? "Preserved history" : "Your signal, sessions, and intelligence in one place."}`}
+            </p>
           </div>
           <div
-            className={
-              multiView ? "workspace-feeds multi-view" : "workspace-feeds"
-            }
+            className="view-options"
+            role="group"
+            aria-label="Workspace view"
           >
-            {visibleStreams.map((item) => (
-              <Dashboard
-                key={item.id}
-                stream={item}
-                compact={multiView}
-                request={request}
-                onUnauthorized={onUnauthorized}
-              />
-            ))}
+            <button
+              ref={viewControl}
+              className={`button small ${!multiView ? "primary" : ""}`}
+              aria-pressed={!multiView}
+              onClick={() => setMultiView(false)}
+            >
+              Single view
+            </button>
+            <button
+              className={`button small ${multiView ? "primary" : ""}`}
+              aria-pressed={multiView}
+              onClick={() => setMultiView(true)}
+            >
+              Multi-view
+            </button>
           </div>
-          {!streams ? (
-            <Loading text="Loading streams" />
-          ) : multiView && !visibleStreams.length ? (
-            <section className="multi-empty" aria-label="No connected streams">
-              <Empty icon="signal" title="No connected streams">
-                Connect an encoder using a stream's RTMP credentials in Single
-                view / Settings. Only connected, non-archived streams appear
-                here.
-              </Empty>
-              <button
-                className="button primary"
-                onClick={() => setMultiView(false)}
-              >
-                Switch to single view
-              </button>
-            </section>
-          ) : null}
-          <footer className="app-footer">
-            <span>
-              <span
-                className={`status-dot ${streams && !error ? "green" : ""}`}
-              />
-              {error
-                ? "RECONNECTING TO BACKEND"
-                : streams
-                  ? "CONNECTED TO BACKEND"
-                  : "CONNECTING TO BACKEND"}
-            </span>
-            <span>
-              STATUS 1s <span className="tiny-divider">/</span> CATALOG 4s{" "}
-              <span className="tiny-divider">/</span> TIMES LOCAL
-            </span>
-            <span>
-              KUNAS/Labs<span className="amber"> CONTROL ROOM</span>
-            </span>
-          </footer>
-        </main>
-      </div>
+        </div>
+        <div
+          className={
+            multiView ? "workspace-feeds multi-view" : "workspace-feeds"
+          }
+        >
+          {visibleStreams.map((item) => (
+            <Dashboard
+              key={item.id}
+              stream={item}
+              compact={multiView}
+              request={request}
+              onUnauthorized={onUnauthorized}
+              directory={{
+                streams,
+                error,
+                busy,
+                multiView,
+                onSelect: (id) => {
+                  setSelectedId(id);
+                  const history = streams?.items.find(
+                    (item) => item.id === id,
+                  )?.archived_at;
+                  if (history) setMultiView(false);
+                  if ((!multiView && id !== selectedId) || history)
+                    requestAnimationFrame(() => viewControl.current?.focus());
+                },
+                onOpen: open,
+              }}
+            />
+          ))}
+        </div>
+        {!streams ? (
+          <Loading text="Loading streams" />
+        ) : multiView && !visibleStreams.length ? (
+          <section className="multi-empty" aria-label="No connected streams">
+            <Empty icon="signal" title="No connected streams">
+              Connect an encoder using a stream's RTMP credentials in Single
+              view / Settings. Only connected, non-archived streams appear here.
+              Use Signal Directory in Single view to select or add offline
+              feeds.
+            </Empty>
+            <button
+              className="button primary"
+              onClick={() => setMultiView(false)}
+            >
+              Switch to single view
+            </button>
+          </section>
+        ) : null}
+        <footer className="app-footer">
+          <span>
+            <span
+              className={`status-dot ${streams && !error ? "green" : ""}`}
+            />
+            {error
+              ? "RECONNECTING TO BACKEND"
+              : streams
+                ? "CONNECTED TO BACKEND"
+                : "CONNECTING TO BACKEND"}
+          </span>
+          <span>
+            STATUS 1s <span className="tiny-divider">/</span> CATALOG 4s{" "}
+            <span className="tiny-divider">/</span> TIMES LOCAL
+          </span>
+          <span>
+            KUNAS/Labs<span className="amber"> CONTROL ROOM</span>
+          </span>
+        </footer>
+      </main>
       {form && (
         <Modal
+          fallbackFocus={viewControl}
           title={
             form.kind === "add"
               ? "Add stream"
@@ -843,11 +681,13 @@ function StreamWorkspace({
 function Dashboard({
   stream,
   compact,
+  directory,
   request: globalRequest,
   onUnauthorized,
 }: {
   stream: Stream;
   compact: boolean;
+  directory: DirectoryProps;
   request: Request;
   onUnauthorized: () => void;
 }) {
@@ -1372,8 +1212,20 @@ function Dashboard({
                   onClick={() => setTab(name)}
                   onKeyDown={(event) => changeTab(event, index)}
                 >
-                  <Icon name={name === "recordings" ? "video" : name} />
-                  <span>{name[0].toUpperCase() + name.slice(1)}</span>
+                  <Icon
+                    name={
+                      name === "recordings"
+                        ? "video"
+                        : name === "directory"
+                          ? "signal"
+                          : name
+                    }
+                  />
+                  <span>
+                    {name === "directory"
+                      ? "Signal Directory"
+                      : name[0].toUpperCase() + name.slice(1)}
+                  </span>
                   {name === "faces" && status && (
                     <span className="tab-count">{status.face_count}</span>
                   )}
@@ -1397,6 +1249,23 @@ function Dashboard({
               tabIndex={0}
               className="tab-panel"
             >
+              {tab === "directory" && (
+                <SignalDirectory
+                  streamId={stream.id}
+                  {...directory}
+                  onSelect={(id) => {
+                    directory.onSelect(id);
+                    if (
+                      !directory.multiView ||
+                      directory.streams?.items.find((item) => item.id === id)
+                        ?.archived_at
+                    ) {
+                      setTab("faces");
+                      requestAnimationFrame(() => tabRefs.current[0]?.focus());
+                    }
+                  }}
+                />
+              )}
               {tab === "faces" && (
                 <>
                   <div className="inspector-heading">

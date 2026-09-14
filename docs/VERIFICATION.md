@@ -1,5 +1,15 @@
 # Verification
 
+## Inline Signal Directory (1.2.2)
+
+The inline-tab change passed 45 Chromium browser tests and the frontend production
+build locally. Tests cover tab order and keyboard navigation, independent management
+targets in four panels, a single shared directory poll, unique IDs, scoped actions,
+archived-history navigation, modal focus restoration, and retained native/HLS players.
+The sidebar and drawer are removed. Desktop/mobile screenshots were regenerated.
+Backend behavior and the recording policy are unchanged. Release CI and anonymous
+image verification are separate publication gates.
+
 ## Signal Directory sidebar (1.2.1)
 
 The sidebar change passed 41 Chromium browser tests, the frontend production

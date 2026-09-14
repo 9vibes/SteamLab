@@ -111,10 +111,11 @@ separately from historical release results in [VERIFICATION.md](VERIFICATION.md)
 
 ## First launch
 
-In 1.2.1, open **Signal Directory** from the left sidebar to select, add, rename,
-or archive streams. The drawer starts closed; on mobile its entry is a compact
-button above the workspace. Escape or Close returns focus to that entry. Selecting
-a feed closes the drawer without stopping any server-side activity.
+In 1.2.2, open **Signal Directory** beside **Faces** in the stream's tool panel
+to select, add, rename, or archive streams. The tab order is Faces, Signal Directory,
+Recordings, Settings. The sidebar and drawer are removed. Multi-view panels keep
+independent management targets while sharing one directory; selecting archived
+history opens Single view. Tab changes do not affect server-side activity.
 
 1. Open KUNAS/Labs from Umbrel. The browser port is **28081**.
 2. Use the generated application password shown by Umbrel. No username is required.
@@ -161,14 +162,14 @@ directory while stopped; it contains sensitive face thumbnails and embeddings.
 ## Image releases
 
 The release workflow runs backend, native CPU model parity, and browser checks
-before publishing amd64 images to GHCR. The 1.2.1 image references are:
+before publishing amd64 images to GHCR. The 1.2.2 image references are:
 
-- `ghcr.io/9vibes/steamlab-web:1.2.1`
-- `ghcr.io/9vibes/steamlab-backend:1.2.1`
-- `ghcr.io/9vibes/steamlab-worker:1.2.1-cpu`
-- `ghcr.io/9vibes/steamlab-worker:1.2.1-cuda`
+- `ghcr.io/9vibes/steamlab-web:1.2.2`
+- `ghcr.io/9vibes/steamlab-backend:1.2.2`
+- `ghcr.io/9vibes/steamlab-worker:1.2.2-cpu`
+- `ghcr.io/9vibes/steamlab-worker:1.2.2-cuda`
 
-Version 1.2.1 adds the Signal Directory sidebar and retains 1.2.0's Multi-view and
+Version 1.2.2 places Signal Directory beside Faces and retains 1.2.0's Multi-view and
 default-on automatic recording, together with
 1.1.0's four independent streams, recording and catalog isolation, and bounded
 shared-engine analysis. It retains the CUDA 12.4.1/cuDNN 9.1 and FFmpeg 4.4 RTSP
@@ -189,9 +190,9 @@ layer without retaining it, run with the backend Python dependencies installed:
 
 ```sh
 python scripts/verify_images.py --pull \
-  ghcr.io/9vibes/steamlab-web:1.2.1 \
-  ghcr.io/9vibes/steamlab-backend:1.2.1 \
-  ghcr.io/9vibes/steamlab-worker:1.2.1-cuda
+  ghcr.io/9vibes/steamlab-web:1.2.2 \
+  ghcr.io/9vibes/steamlab-backend:1.2.2 \
+  ghcr.io/9vibes/steamlab-worker:1.2.2-cuda
 ```
 
 This helper does not use GitHub credentials or Docker's credential configuration.

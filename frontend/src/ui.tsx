@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 
 const paths = {
   signal: "M4 17v3m5-8v8m5-13v13m5-18v18",
@@ -93,15 +93,13 @@ export function Modal({
   children,
   onClose,
   wide = false,
-  className = "",
-  id,
+  fallbackFocus,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
-  className?: string;
-  id?: string;
+  fallbackFocus?: RefObject<HTMLButtonElement | null>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -112,14 +110,19 @@ export function Modal({
     dialog.querySelector<HTMLInputElement>("input:not(:disabled)")?.focus();
     return () => {
       dialog.close();
-      previous?.focus();
+      // The management action may have removed or disabled its originating button.
+      requestAnimationFrame(() => {
+        if (previous?.isConnected && !previous.matches(":disabled"))
+          previous.focus();
+        if (document.activeElement !== previous)
+          fallbackFocus?.current?.focus();
+      });
     };
-  }, []);
+  }, [fallbackFocus]);
   return (
     <dialog
       ref={ref}
-      id={id}
-      className={`modal ${wide ? "modal-wide" : ""} ${className}`}
+      className={`modal ${wide ? "modal-wide" : ""}`}
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault();

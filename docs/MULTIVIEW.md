@@ -12,10 +12,12 @@ the existing selected-stream layout and archive access. Multi-view displays only
 non-archived connected (`online`) streams, two columns on desktop and one on small
 screens, up to four feeds (second row appears for the third/fourth live feed).
 Each tile has a named video, recording controls/telemetry, and its own Faces,
-Recordings, and Settings tabs BELOW the video, never beside it. Empty multi-view
-explains how to connect a stream or switch to single view. The directory and
-add/rename/archive management stay outside the grid; selecting archived history
-switches to single view. Preserve per-stream keys/scoped requests and stable keys.
+Signal Directory, Recordings, and Settings tabs BELOW the video, never beside it.
+Since 1.2.2, Signal Directory is an inline tab rather than a sidebar drawer. Each
+panel keeps its own management target while directory data and CRUD forms remain
+shared. Empty multi-view explains how to connect a stream or switch to single view.
+Selecting archived history switches to single view. Preserve per-stream keys/scoped
+requests and stable keys.
 
 Switching view must not POST recording/analysis actions. Avoid duplicate IDs for
 tabs, selects, credentials, SVG gradients, and dialogs; give every video/region a
