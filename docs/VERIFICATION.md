@@ -7,8 +7,12 @@ build locally. Tests cover tab order and keyboard navigation, independent manage
 targets in four panels, a single shared directory poll, unique IDs, scoped actions,
 archived-history navigation, modal focus restoration, and retained native/HLS players.
 The sidebar and drawer are removed. Desktop/mobile screenshots were regenerated.
-Backend behavior and the recording policy are unchanged. Release CI and anonymous
-image verification are separate publication gates.
+Backend behavior and the recording policy are unchanged.
+The [1.2.2 release workflow](https://github.com/9vibes/SteamLab/actions/runs/34806760792)
+passed on Python 3.10 and 3.12, including native model checks and 45 browser tests.
+All image variants built successfully, and every layer of the web, backend, and
+CUDA worker images was downloaded anonymously and SHA256-verified before the
+Umbrel update. Target-host installation and GPU throughput remain deployment checks.
 
 ## Signal Directory sidebar (1.2.1)
 
