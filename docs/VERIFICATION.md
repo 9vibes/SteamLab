@@ -183,10 +183,13 @@ decodable recordings and byte ranges, archive/history preservation, and unchange
 sibling recording sessions. All 21 checks passed in 117.2 seconds including cleanup.
 Artifacts are at `/tmp/opencode/steamlab-integration/run-4usb69ca/` in this workspace.
 
-The 1.2.0 release CI will run, including native model parity and matching Docker
-image builds. Anonymous image verification, installed Umbrel behavior, target GPU
-inference, and four-feed throughput remain release/host checks. Face analysis is
-still opt-in. Historical release successes above do not verify 1.2.0 artifacts.
+The [1.2.0 release workflow](https://github.com/9vibes/SteamLab/actions/runs/34797349505)
+subsequently passed on Python 3.10 and 3.12, including native model parity and 34
+browser tests. All four Docker image variants built and published successfully.
+The web, backend, and CUDA worker images were downloaded anonymously and every
+layer SHA256-verified before updating the Umbrel package. Installed Umbrel behavior,
+target GPU inference, and four-feed throughput remain host checks. Face analysis
+is still opt-in.
 
 **Upgrade warning:** `AUTO_RECORD` defaults to `true` in 1.2.0 and records already-live
 feeds after an update or backend restart, **even if previously stopped manually**.

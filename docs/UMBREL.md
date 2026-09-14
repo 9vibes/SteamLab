@@ -174,9 +174,9 @@ the stopped app, and re-enable analysis afterward only if wanted.
 The Umbrel package uses the CUDA image and pins published image digests. Packages
 must permit anonymous pulls before a store update is published. Repository visibility
 alone does not guarantee GitHub Container Registry package visibility.
-The recorded local 1.2.0 checks are in [VERIFICATION.md](VERIFICATION.md); CI,
-image publication, and anonymous image verification are separate release steps.
-Historical 1.0.0/1.1.0 successes do not verify the 1.2.0 images.
+The local and release-CI results for 1.2.0, including image publication and anonymous
+layer verification, are recorded in [VERIFICATION.md](VERIFICATION.md). Target-host
+GPU and installed Umbrel smoke tests remain deployment checks.
 
 To verify anonymous registry access and optionally download/checksum every image
 layer without retaining it, run with the backend Python dependencies installed:
